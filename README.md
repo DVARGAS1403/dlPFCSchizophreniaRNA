@@ -37,17 +37,27 @@ Scripts are numbered in a reasonable sequential order.
 
 * NIH dataset
     * Pre-processing
-        * 1
-        * 2
-        * 3
+        * 1-Format_phenotype_data.Rmd
+        * 2-Format_idat_files.Rmd
+        * 3-Filter_dlpfc_array_data.Rmd
     * Analyses
-        * 4
-        * 5
-        * 6
+        * 4-Sz_cohort_demographics.Rmd
+        * 5-Robust_lmer.Rmd
+        * 6a-Cluster_schizophrenics.Rmd
+        * 6b-Perturbation_stability_of_clustering.Rmd
+        * 6c-Antipsychotics.Rmd
+        * 6c-Subgroup_demographics.Rmd
+        * 6c-Laterality.Rmd NOT USED IN MANUSCRIPT
+        * 6d-Graphical_analysis.Rmd
+        * 7a-Robust_lmer_with_sz_subtype_1.Rmd
+        * 7b-Robust_lmer_with_sz_subtype_2.Rmd
+        * 7-Figures_and_tables.Rmd
+        * 7-Figures_and_table_from_residuals.Rmd NOT USED IN MANUSCRIPT
+        * 7-Comparing_hit_lists.Rmd NOT USED IN MANUSCRIPT
 * CMC dataset  
     * Pre-processing
-        * 8a
+        * 8a-Preprocess_cmc_data.Rmd
     * Analyses
-        * 8b
-        * 8c
-        * 8d
+        * 8b-CMC_cohort_demographics.Rmd
+        * 8c-Pitt_cohort_de_analysis.Rmd
+        * 8d-Clustering_of_pitt_cohort_schizophrenics
