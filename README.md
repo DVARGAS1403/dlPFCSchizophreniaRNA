@@ -47,7 +47,6 @@ Scripts are numbered in a reasonable sequential order.
         * 6b-Perturbation_stability_of_clustering.Rmd
         * 6c-Antipsychotics.Rmd
         * 6c-Subgroup_demographics.Rmd
-        * 6c-Laterality.Rmd NOT USED IN MANUSCRIPT
         * 6d-Graphical_analysis.Rmd
         * 7a-Robust_lmer_with_sz_subtype_1.Rmd
         * 7b-Robust_lmer_with_sz_subtype_2.Rmd
