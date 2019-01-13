@@ -51,8 +51,7 @@ Scripts are numbered in a reasonable sequential order.
         * 7a-Robust_lmer_with_sz_subtype_1.Rmd
         * 7b-Robust_lmer_with_sz_subtype_2.Rmd
         * 7-Figures_and_tables.Rmd
-        * 7-Figures_and_table_from_residuals.Rmd NOT USED IN MANUSCRIPT
-        * 7-Comparing_hit_lists.Rmd NOT USED IN MANUSCRIPT
+        * 7-Figures_and_table_from_residuals.Rmd
 * CMC dataset  
     * Pre-processing
         * 8a-Preprocess_cmc_data.Rmd
