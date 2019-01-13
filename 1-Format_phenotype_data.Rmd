@@ -1,0 +1,133 @@
+---
+title: "Get Phenotype information (sample annotation file)"
+author: "Rhodes"
+output: html_document
+---
+Date: `r date()`
+
+# Load data and libraries
+```{r Load_data_and-libraries, cache=FALSE, message=FALSE}
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+```
+
+There are four directories in the dataset directory:
+PhenoGenotypeFiles/RootStudyConsentSet_phs000979.SchizophreniaDLPFC_HippocampusGeneExpression.v1.p1.c1.GRU
+
+Those four directories are:
+ExpressionFiles, GenotypeFiles, PhenotypeFiles, Study MetaFiles
+
+The directory "ExpressionFiles" contains two files:
+phe000013.v1.SchizophreniaDLPFC_HippocampusGeneExpression.raw-data-idat.HumanHT-12_v4.c1.GRU.tar.gz.ncbi_enc
+phe000013.v1.SchizophreniaDLPFC_HippocampusGeneExpression.sample-info.MULTI.tar.gz.ncbi_enc
+
+When the first of those files is decrypted and its contents extracted using the command "tar -xzf <filename>" we get many .idat files which are moved to ~/HBCCdata/idatFiles
+
+When the second of those files is decrypted and its contents extracted using the command "tar -xzf <filename>" we get the directory "sample". The directory "sample" contains a single subdirectory "phe000013.v1" which in turn contains:
+genotyped_sample_phe00013.v1.txt
+phe000013.v1.SchizophreniaDLPFC_HippocampusGeneExpression.file.desc
+sample-file.txt
+sample_idat_plate.txt
+sample-info.csv
+subj_sample_use_platform.txt
+
+Those files are moved to "HBCCdata/Documentation".
+
+The dataset directory "PhenotypeFiles" contains 12 encrypted files which were decrypted and copied to HBCCdata/PhenotypeFiles. Some of them are .xml files and some are .txt.gz files. The .txt.gz files were extracted using the command "gzip -d <filename>", or, in the case of the file "..._Subject_Phenotypes.GRU.txt, with the command "tar -xzf <filename>".
+
+The code below examines those four files. In the case of the Subject and Phenotype files there were several lines of text followed by the relevant table. We looked at those lines during the development of this code and then skipped them when reading the tables below.
+```{r Get_file_names, cache=FALSE}
+Subject = "phs000979.v1.pht005193.v1.p1.Mental_Disorders_Postmortem_Subject.MULTI.txt"
+Sample = "phs000979.v1.pht005194.v1.p1.Mental_Disorders_Postmortem_Sample.MULTI.txt"
+Phenotypes = "phs000979.v1.pht005195.v1.p1.c1.Mental_Disorders_Postmortem_Subject_Phenotypes.GRU.txt"
+Attrib = "phs000979.v1.pht005196.v1.p1.c1.Mental_Disorders_Postmortem_Sample_Attributes.GRU.txt"
+```
+
+
+```{r Examine_Subject_file, cache=FALSE}
+Subject = read.table(file = paste("HBCCdata/PhenotypeFiles/", Subject, sep=""), skip = 9, header = TRUE, sep = "")
+dim(Subject)
+head(Subject)
+```
+
+This table contains no useful information and the R object is deleted.
+
+```{r Delete_"Subject", cache=FALSE}
+rm(Subject)
+```
+
+
+```{r Examine_Sample.Multi, cache=FALSE}
+Sample = read.table(file = paste("HBCCdata/PhenotypeFiles/", Sample, sep=""), header = TRUE, sep = "\t", stringsAsFactors = FALSE) 
+# stringsAsFactors=FALSE is necessary so "SAMPLE_ID" will be a character string and can be used as rownames.
+dim(Sample)
+head(Sample)
+```
+
+This table is useful because it allows us to match the "SAMPLE_ID" (for example "9286417006A") from which we can generate the name of the corresponding idat file to the "SUBJECT_ID" which allows us to access the relevant phenotype information.
+
+```{r Examine_Attributes}
+Attrib = read.table(file = paste("HBCCdata/PhenotypeFiles/", Attrib, sep=""), header = TRUE, sep = "\t")
+dim(Attrib)
+head(Attrib)
+```
+
+This file is useful because it contains Batch and RIN data indexed by the "SAMPLE_ID". It also contains the "HISTOLOGICAL_TYPE" which allows us to restrict the dataset to the DLPFC (or hippocampus).
+```{r Examine_Phenotypes, cache=FALSE}
+Phenotypes = read.csv(file = paste("HBCCdata/PhenotypeFiles/", Phenotypes, sep=""), header = TRUE, sep = "\t", skip = 8, stringsAsFactors = FALSE)  # "stringsAsFactors = FALSE"is necessary so we can use the strings in line 1 as column headers
+
+colnames(Phenotypes) = Phenotypes[1,]
+Phenotypes = Phenotypes[-1,]
+dim(Phenotypes)
+head(Phenotypes)
+```
+
+This is the file which contains all of the relevant information about the individual subjects including diagnosis, age, gender, etc.
+
+# Restrict the dataset to samples from the DLPFC
+This will eliminate not only the samples from hippocampus, but also the many samples of dura and the DNA samples used for genotyping.
+```{r Restrict_to_DLPFC, cache=FALSE}
+Attrib = Attrib[Attrib$HISTOLOGICAL_TYPE == "Dorsolateral prefrontal cortex",]
+Sample = Sample[Sample$SAMPLE_ID %in% Attrib$SAMPLE_ID,]
+
+# The next command is necessary because there are subjects (rows in the dataframe "Phenotype") for whom we do not have DLPFC expression array data.
+Phenotypes = Phenotypes[Phenotypes$SUBJECT_ID %in% Sample$SUBJECT_ID,]
+```
+
+This leaves us with `r nrow(Sample)` subjects for whom we have DLPFC expression array data. They have the following diagnoses:
+```{r Diagnoses}
+table(Phenotypes$NewDx)
+```
+
+# Add the "Sample_ID" for the corresponding DLPFC sample as the rownames for "Phenotypes"
+```{r Add_rownames_to_"Phenotype", cache=FALSE}
+row.names(Sample) = Sample$SUBJECT_ID # Make the SUBJECT_ID the rownames for "Sample" so we can index it
+row.names(Phenotypes) = Sample[as.character(Phenotypes$SUBJECT_ID),"SAMPLE_ID"]
+```
+
+# Append "RIN" and "BATCH" to "Phenotypes"
+```{r}
+# Reorder the rows of "Attrib" so they match those of "Phenotypes".
+# This is probably unnecessary because they probably are already in the same order, but we're not sure.
+row.names(Attrib) = Attrib$SAMPLE_ID
+Attrib = Attrib[row.names(Phenotypes),]
+
+# Now append the columns "RIN" and"BATCH"
+Phenotypes = cbind(Phenotypes, Attrib[,c("RIN", "BATCH")])
+```
+
+# Number of batches
+We notice is that in this version of the dataset there are `r length(unique(Phenotypes$BATCH))` batches as compared to the much smaller number in the normalized dataset on the HBCC server. The reason for this is unclear.
+```{r Size_of_batches, cache=FALSE}
+table(Phenotypes$BATCH)
+```
+
+# Save the phenotype file
+```{r Save_Phenotypes, cache=FALSE}
+save(file="0._Rdata_files/1. DLPFC.Phenotypes.Rdata", Phenotypes)
+```
+
+
+```{r SessionInfo}
+sessionInfo()
+```

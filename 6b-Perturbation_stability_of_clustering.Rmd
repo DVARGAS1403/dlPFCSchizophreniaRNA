@@ -1,0 +1,258 @@
+---
+title: "Assess the perturbation stability of the designation of schizophrenia subtype"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+In this analysis we will assess the perturbation stability of the classification of the schizophrenics as either type 1 or type 2 by repeating the classification many times, each time with  a small random error added to the residuals on which the classification. This will be done at four levels of random error (the error will be uniformly distributed over a range +/- 0.05, 0.1, 0.25, or 0.5 standard deviations) and the percentage of times each schizophrenic is classified as type 1 or type 2 tabulated.
+
+At each level of random error, schizophrenics which are not consistently classified 100 times out of 100 repetitions will be classified as "Mixed" rather than "Type 1" or "Type 2".
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, results='hide'}
+library("WGCNA")  
+options(stringsAsFactors = FALSE) # This is necessary for WGCNA to run properly
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/6a. Cluster Schizophrenics.Rdata") # Contains:
+#   Data               # The expression array dataset restricted to Sz and controls
+#   Pheno              # The subject phenotype data
+#   IlluminaProbes     # The array annotation provided by Illumina 
+#   DEprobes
+#   Type1              # Subject IDs of the type 1 schizophrenics
+#   Type2              # Subject IDs of the type 2 schizophrenics
+#   SzDEprobeResiduals # The unscaled residuals after using linear regression to correct the expression array data for the covariates (Batch, RIN, Age, etc.). This is data for the DEprobes only with the linear regression done on the schizophrenics only
+#   FailedGenes
+#   Rtom               # WGCNA similarity matrix for schizophrenics
+```
+
+# Quick check of schizophrenia subtype assignment in analysis 6a
+```{r Run_lm_on_Type1_and_Type2_separately, cache=FALSE}
+DEgenes1 = 0 # Count of number of differentially expressed genes
+DEgenes2 = 0
+
+T1 = (row.names(Pheno) %in% Type1) | (Pheno$Dx == "Control")
+Dx1 = Pheno$Dx[T1]
+Age1 = Pheno$Age[T1]
+Sex1 = Pheno$Gender[T1]
+Race1 = Pheno$Race[T1]
+RIN1 = Pheno$RIN[T1]
+
+T2 = (row.names(Pheno) %in% Type2) | (Pheno$Dx == "Control")
+Dx2 = Pheno$Dx[T2]
+Age2 = Pheno$Age[T2]
+Sex2 = Pheno$Gender[T2]
+Race2 = Pheno$Race[T2]
+RIN2 = Pheno$RIN[T2]
+
+BoneferroniThreshold = 0.05 / ncol(Data)
+
+# For speed, restrict "Data" to the differentially expressed probes (DEprobes)
+HitsData = Data[,colnames(Data) %in% DEprobes]
+Type1Data = HitsData[T1,]
+Type2Data = HitsData[T2,]
+
+for (i in 1:ncol(HitsData)) {
+    Model1 = lm(Type1Data[,i] ~ Dx1 + Age1 + Sex1 + Race1 + RIN1)
+    Coef = summary(Model1)$coefficients
+    P = Coef["Dx1Schizo", "Pr(>|t|)"]
+    if (P < BoneferroniThreshold) {DEgenes1 = DEgenes1 + 1}
+    
+    Model2 = lm(Type2Data[,i] ~ Dx2 + Age2 + Sex2 + Race2 + RIN2)
+    Coef = summary(Model2)$coefficients
+    P = Coef["Dx2Schizo", "Pr(>|t|)"]
+    if (P < BoneferroniThreshold) {DEgenes2 = DEgenes2 + 1}
+}
+DEgenes1
+DEgenes2
+```
+
+We conclude that the assignment of "Type 1" and "Type 2" is reversed as compared to our convention that it is the Type 1 schizophrenics who have a relatively normal DLPFC transcriptome.
+
+```{r Reverse_cluster_assignment, cache=FALSE}
+Tmp = Type1
+Type1 = Type2
+Type2 = Tmp
+
+# We will reuse several variable names, so save the originals
+Residuals.sav = Residuals = scale(SzDEprobeResiduals)
+Type1.sav = Type1
+Type2.sav = Type2
+
+date() # Start time for loop in following block
+```
+
+
+```{r Random_error, cache=FALSE, results="hide", warning=FALSE, message=FALSE}
+# The following chunk will take about a half hour to run with n = 99 (presumably 5 hrs with n = 999).
+n = 999 # Add a random error to the data and repeat the clustering n times
+err = c(0.05, 0.1, 0.25, 0.5) # Do this at the four levels of error (in units of SD)
+
+# The matrices below save the results at each level of error
+Type1MultipleErrors = matrix(nrow = nrow(Residuals), ncol=4)
+Type1MultipleErrors[,] = NA
+row.names(Type1MultipleErrors) = row.names(Residuals)
+colnames(Type1MultipleErrors) = c(0.05, 0.1, 0.25, 0.5)
+
+Type2MultipleErrors = Type1MultipleErrors
+
+for (k in 1:4) { # This loop loops over multiple levels of err
+    # Set up a vector initialized to 0 to contain the number of times each schizophrenic is assigned to subtype 1 or subtype 2 
+    Type1Counts = vector(mode = "numeric", length = nrow(Residuals))
+    names(Type1Counts) = row.names(Residuals)
+    Type2Counts = Type1Counts
+
+    # Update Type1Counts and Type2Counts based on the original classification
+    Increment = names(Type1Counts) %in% Type1.sav
+    Type1Counts = Type1Counts + Increment
+
+    Increment = names(Type2Counts) %in% Type2.sav
+    Type2Counts = Type2Counts + Increment
+
+    # Add a random error to the scaled, adjusted expression data and re-cluster n times.  
+    for (j in 1:n) {
+        Error = matrix(data = runif(nrow(Residuals) * ncol(Residuals), min = -err[k], max = err[k]),
+                    nrow = nrow(Residuals), ncol = ncol(Residuals) )
+        Residuals = Residuals.sav + Error
+
+        # Run WGCNA
+        Radj = adjacency(t(Residuals), type="signed", power=5)
+        Rtom = TOMsimilarity(Radj)
+        RdissTOM = 1 - Rtom
+        geneTree = hclust(as.dist(RdissTOM), method = "average"); # Call the hierarchical clustering function
+        dynamicMods = cutreeDynamic(dendro = geneTree, distM = RdissTOM, deepSplit = 2, pamRespectsDendro = FALSE);
+
+        dynamicColors = labels2colors(dynamicMods)
+
+        # Make character vectors containing the subject IDs for the type 1 and type 2 schizophrenics
+        Type1 = row.names(Residuals)[dynamicColors == "turquoise"]
+        Type2 = row.names(Residuals)[dynamicColors == "blue"]
+
+        # Quick check of cluster assignment using lm()
+        T1 = (row.names(Pheno) %in% Type1) | (Pheno$Dx == "Control")
+        Dx1 = Pheno$Dx[T1]
+        Age1 = Pheno$Age[T1]
+        Sex1 = Pheno$Gender[T1]
+        Race1 = Pheno$Race[T1]
+        RIN1 = Pheno$RIN[T1]
+
+        T2 = (row.names(Pheno) %in% Type2) | (Pheno$Dx == "Control")
+        Dx2 = Pheno$Dx[T2]
+        Age2 = Pheno$Age[T2]
+        Sex2 = Pheno$Gender[T2]
+        Race2 = Pheno$Race[T2]
+        RIN2 = Pheno$RIN[T2]
+
+        BoneferroniThreshold = 0.05 / ncol(Data)
+        
+        # For speed, restrict "Data" to the differentially expressed probes (DEprobes)
+        HitsData = Data[,colnames(Data) %in% DEprobes]
+        Type1Data = HitsData[T1,]
+        Type2Data = HitsData[T2,]
+
+        DEgenes1 = 0
+        DEgenes2 = 0
+
+        for (i in 1:ncol(HitsData)) {
+            Model1 = lm(Type1Data[,i] ~ Dx1 + Age1 + Sex1 + Race1 + RIN1)
+            Coef = summary(Model1)$coefficients
+            P = Coef["Dx1Schizo", "Pr(>|t|)"]
+            if (P < BoneferroniThreshold) {DEgenes1 = DEgenes1 + 1}
+          
+            Model2 = lm(Type2Data[,i] ~ Dx2 + Age2 + Sex2 + Race2 + RIN2)
+            Coef = summary(Model2)$coefficients
+            P = Coef["Dx2Schizo", "Pr(>|t|)"]
+            if (P < BoneferroniThreshold) {DEgenes2 = DEgenes2 + 1}
+        }
+
+        # Reverse Type1 and Type2 if that is appropriate
+        if (DEgenes1 > DEgenes2) {
+            Tmp = Type1
+            Type1 = Type2
+            Type2 = Tmp
+        }
+
+        # Increment counts
+        Increment = names(Type1Counts) %in% Type1
+        Type1Counts = Type1Counts + Increment
+
+        Increment = names(Type2Counts) %in% Type2
+        Type2Counts = Type2Counts + Increment
+    } # end of loop with index j
+    Type1MultipleErrors[, k] = Type1Counts
+    Type2MultipleErrors[, k] = Type2Counts
+} # end of loop with index k
+date()
+```
+
+# Update "Pheno"
+```{r Update_Pheno, cache=FALSE}
+# This is the subtype assigned in analysis 6 (without any random errors) but reversed to make it consistent with our convention that it is the type 1 schizophrenics who have a DLPFC transcriptome similar to that of the controls.
+date() # End time for loop in previous block
+
+Subtype = vector(mode = "character", length = nrow(Pheno))
+names(Subtype) = row.names(Pheno)
+Subtype[names(Subtype) %in% Type1.sav] = "Type1"
+Subtype[names(Subtype) %in% Type2.sav] = "Type2"
+Subtype[Pheno$Dx == "Control"] = "Control"
+
+# Create empty arrays with the correct row.names and initialize to "Mixed"
+Subtype_05 = Subtype_10 = Subtype_25 =Subtype_50 = Subtype
+Subtype_05[] = Subtype_10[] = Subtype_25[] = Subtype_50[] = "Mixed"
+
+#Fill in "Control" entries
+Subtype_50[Pheno$Dx == "Control"] = "Control"
+Subtype_05[] = Subtype_10[] = Subtype_25[] = Subtype_50[] 
+
+# Fill in the "Type1" entries
+foo = row.names(Type1MultipleErrors[Type1MultipleErrors[,1] > 990,]) 
+Subtype_05[names(Subtype_05) %in% foo] = "Type1"
+
+foo = row.names(Type1MultipleErrors[Type1MultipleErrors[,2] > 990,]) 
+Subtype_10[names(Subtype_10) %in% foo] = "Type1"
+
+foo = row.names(Type1MultipleErrors[Type1MultipleErrors[,3] > 990,]) 
+Subtype_25[names(Subtype_25) %in% foo] = "Type1"
+
+foo = row.names(Type1MultipleErrors[Type1MultipleErrors[,4] > 990,]) 
+Subtype_50[names(Subtype_50) %in% foo] = "Type1"
+
+# Fill in the "Type2" entries
+foo = row.names(Type2MultipleErrors[Type2MultipleErrors[,1] > 990,]) 
+Subtype_05[names(Subtype_05) %in% foo] = "Type2"
+
+foo = row.names(Type2MultipleErrors[Type2MultipleErrors[,2] > 990,]) 
+Subtype_10[names(Subtype_10) %in% foo] = "Type2"
+
+foo = row.names(Type2MultipleErrors[Type2MultipleErrors[,3] > 990,]) 
+Subtype_25[names(Subtype_25) %in% foo] = "Type2"
+
+foo = row.names(Type2MultipleErrors[Type2MultipleErrors[,4] > 990,]) 
+Subtype_50[names(Subtype_50) %in% foo] = "Type2"
+
+feh = cbind(Subtype, Subtype_05, Subtype_10, Subtype_25, Subtype_50)
+Pheno = cbind(Pheno,feh)
+apply(feh,2,table)
+```
+
+# Save
+```{r}
+save(file = "0._Rdata_files/6b - Perturbation stability of subtype.Rdata",
+     Type1MultipleErrors, # Table with the percent of times each schizophrenic was scored as "Type1" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+     Type2MultipleErrors, # Table with the percent of times each schizophrenic was scored as "Type2" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+     Data,                # The expression array dataset restricted to Sz and controls
+     Pheno,               # The subject phenotype data including imputed subtype
+     IlluminaProbes,      # The array annotation provided by Illumina 
+     DEprobes,
+     SzDEprobeResiduals   # The unscaled residuals after using robust mixed linear regression to correct the expression array data for the measured covariates (Batch, RIN, Age, etc.).  This is data for the DEprobes only with the linear regression done on the schizophrenics only. There were no imputed covariates included in the linear regression which was part of analysis 6a
+)
+```
+
+
+```{r}
+sessionInfo()
+```

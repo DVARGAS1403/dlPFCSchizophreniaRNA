@@ -1,0 +1,120 @@
+---
+title: "Identification of differentially expressed exons in the Pitt cohort using edgeR for linear regression"
+output: html_document
+---
+Date:  `r date()`
+
+# Introduction
+We expect the DLPFC transcriptome of young, acutely ill schizophrenics such as those in the CMC-Pitt cohort to be different from that of older, "burnt out" schizophrenics such as those in the other two cohorts. We will therefore analyze them separately.
+
+This is an analysis to identify differentially expressed exons in the DLPFC of the "Pitt cohort".
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, warning=FALSE}
+library("edgeR")
+library("statmod")
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/8a. Preprocessed CMC data.Rdata") # Contains:
+#   ExonList       # A data.frame with the exon, probe, and gene names for the exons which mapped to Illumina probes differentially expressed in the HBCC expression array data.
+#   CensoredProbes # A list with the probes censored based on Arloth et al.
+#   CMCdata        # The CMC exon count data for the schizophrenics and controls.
+#   CMCpheno       # The subject annotation file for the CMC controls and schizophrenics 
+#   Type2Hits      # The array probes differentially expressed in the HBCC type 2 schizophrenics (from analysis 7b)
+```
+
+### Restrict the analysis to the CMC-Pitt cohort
+```{r Pitt_only, cache=FALSE}
+# We will use the name "FullData" for the entire dataset restricted to the Pitt cohort.
+# Later we will use the name "Data" for the "FullData" restricted to the exons which map to the Illumina probes which detect differentially expressed transcripts in the NIMH expression array data.
+FullData = CMCdata[,CMCpheno$Institution == "Pitt"]
+Pheno = CMCpheno[CMCpheno$Institution == "Pitt",]
+```
+
+### Restrict the analysis to exons with a mean number of counts of at least 10
+```{r Minimum_number_of_counts, cache=FALSE}
+MeanCounts = apply(FullData, 1, mean)
+keep = (MeanCounts >= 10)
+discard = row.names(FullData)[MeanCounts < 10]
+FullData = FullData[keep,]
+
+# Keep track of the exons matching DE probes which fail this criterion
+CensoredProbes$Minimum_counts = ExonList[ExonList$Exon %in% discard,]
+```
+
+This results in the censoring of data from `r nrow(CensoredProbes$Minimum_counts)` exons which match differentially expressed probes. They come from `r length(unique(CensoredProbes$Minimum_counts[,"Gene"]))` of the `r length(unique(ExonList[,"Gene"]))` genes identified as differentially expressed in the NIMH expression array data.
+
+### Normalize the count data using edgeR
+Note that this normalization is being done on the entire exon set, not the exons after restriction to those mapping to the differentially expressed probes in the HBCC expression array data.  This is important.  If we restricted the data first we would normalize away any differential expression.
+
+See the Stanford tutorial for an excellent introduction to edgeR https://web.stanford.edu/class/bios221/labs/rnaseq/lab_4_rnaseq.html. 
+
+Quoting from that tutorial:
+The calcNormFactors() function normalizes for RNA composition by finding a set of scaling factors for the library sizes that minimize the log-fold changes between the samples for most genes. The default method for computing these scale factors uses a trimmed mean of M-values (TMM) between each pair of samples. We call the product of the original library size and the scaling factor the effective library size. The effective library size replaces the original library size in all downsteam analyses.
+
+Note that many of these commands will take several minutes each.
+```{r Normalize_using_edgeR, cache=FALSE}
+d = DGEList(counts=FullData)
+d = calcNormFactors(d)
+EffectiveLibrarySize = d$samples$lib.size * d$samples$norm.factors
+NormalizationFactor = EffectiveLibrarySize/mean(EffectiveLibrarySize)
+hist(NormalizationFactor, breaks=25)
+```
+
+### Restrict the dataset to the exons which map to the differentially expressed probes
+``` {r Restrict_to_DE_probes, cache=FALSE}
+d$counts = d$counts[row.names(d$counts) %in% ExonList$Exon,]
+```
+
+Because the CMC-Pitt cohort has only African-Americans and Caucasians, remove "Other" as a factor value for Race
+```{r Remove_Race_Other, cache=FALSE}
+Pheno$Race = as.factor(as.character(Pheno$Race))
+```
+
+### Run glm
+```{r}
+design = model.matrix(~ Dx + RIN + Sex + Age + Race, Pheno)
+
+d = estimateDisp(d, design, robust=TRUE)
+fit = glmQLFit(d, design, robust=TRUE)
+plotQLDisp(fit)
+qlf = glmQLFTest(fit, coef="DxSCZ")
+resultsGLM = as.data.frame(topTags(qlf, n=nrow(d$counts)))
+CMChits = resultsGLM[resultsGLM$FDR < 0.05,]
+```
+
+`r nrow(CMChits)` of the `r nrow(resultsGLM)` exons being studied have an FDR of less that 0.05. In the next analysis (8d) we will use those exons to classify the schizophrenics. 
+
+The exons with the most statistically significant differential expression are:
+
+```{r Annotate_CMChits, cache=FALSE}
+GeneNames = ExonList[!duplicated(ExonList$Exon),]
+row.names(GeneNames) = GeneNames$Exon
+GeneNames = GeneNames[row.names(CMChits),] # Put into the same order as rows of CMChits
+GeneNames = GeneNames[,-1] # Deleted column "Exon", leaving only "Probe" and "Gene"
+CMChits = cbind(CMChits, GeneNames)
+
+# Print without the Exon or Illumina probe names as row names
+foo = CMChits
+row.names(foo) = NULL
+foo[1:25,-6]
+```
+
+# Save these results
+```{r Save_results, cache=FALSE}
+save(file = "0._Rdata_files/8c - Pitt-only GLM.Rdata",
+    CensoredProbes, # Just what it sounds like
+    CMCdata,        # The count data for all the exons
+    CMCpheno,       # The subject annotation file
+    ExonList,       # The exons mapping to the Illumia array probes detecting differentially expressed transcripts in the HBCC expression array data
+    d,              # The DGElist with the normalized CMC data for the exons on ExonList with a mean number of counts of at least 10
+    CMChits,        # The statistically significant DE exons
+    resultsGLM)     # The results of the edgeR glm analysis of d
+```
+
+
+```{r}
+sessionInfo()
+```

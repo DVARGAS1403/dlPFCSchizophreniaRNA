@@ -1,0 +1,64 @@
+---
+title: "Figures based on adjusted data (residuals)"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+These are the boxplots printed earlier except that this time we are using the data adjusted for RIN, age, gender, etc.
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, results='hide'}
+RootDirectory ="~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/7b. Sz subtype 2 lmer.Rdata") # Contains:
+#   Data           # The normalized, log2-transformed expression array data restricted to Sz and controls
+#   Pheno          # The subject phenotype data including Dx subtypes
+#   IlluminaProbes # The array annotation from Illumina
+#   Re_annotation  # The reannotation from Arloth 2015
+#   Results_2
+#   Type2Hits
+
+load(file="0._Rdata_files/6a.tmp_3-29-2018.Rdata") # this command loads "Residuals", the residuals calculated without including Dx as a covariate (in other words, the data adjusted for RIN, age, etc.)
+```
+
+# Create figures
+```{r Create_figures, cache=FALSE}
+# Restrict figures to subjects classified as "Control", "Type1", or "Type2" (exclude "Mixed").
+Restricted.Data = Residuals[Pheno$Subtype_50 != "Mixed",]
+Restricted.Pheno = Pheno[Pheno$Subtype_50 != "Mixed",]
+
+Gene = c("NPY", "TAC1", "BAG3", "NDUFB2")
+for (i in 1:length(Gene)) {
+    Probe = row.names(Type2Hits)[Type2Hits$Symbol == Gene[i]]
+    if (length(Probe) == 1) {
+        boxplot(Restricted.Data[,Probe] ~ Restricted.Pheno$Subtype_50, main = Gene[i])
+    } else {
+        print(paste("Multiple probes for", Gene[i]))
+    }
+}
+```
+
+
+```{r Histograms, cache=FALSE}
+Dx = Restricted.Pheno$Subtype_50
+PlotData = 
+hist(BAG3[Dx == "Type1"], 
+     breaks = seq(from=4, to=10, by=0.3), 
+     probability = "TRUE",
+     col = "red",
+     main="Type 1: red \n Type 2: blue", 
+     ylim=c(0,1),
+     xlab = "BAG3")
+hist(BAG3[Dx == "Type2"], add=T,
+     breaks = seq(from=4, to=10, by=0.3), 
+     probability = "TRUE",
+     col = rgb(0, 0, 1, 0.5))
+```
+
+
+```{r}
+sessionInfo()
+```

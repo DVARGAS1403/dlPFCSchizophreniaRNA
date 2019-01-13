@@ -1,0 +1,172 @@
+---
+title: "Clustering of schizophrenics based on differentially expressed genes"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+We will cluster the **schizophrenics**  based on the genes differentially expressed in the schizophrenics as compared to controls ("DEprobes").
+
+In this analysis we adjust for covariates such as batch, RIN, age, etc by robust mixed linear regression. The residuals are scaled and those Z-scores used for clustering by WGCNA.
+
+**Important notes:**  
+
+1) This linear regression and the scaling of the residuals is done based on the data for the schizophrenics ONLY and is being done only for the DEprobe data.  
+
+2) This analysis does NOT include any imputed covariates 
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, results='hide'}
+library("robustlmm") # Library for mixed effects models
+library("WGCNA")     
+options(stringsAsFactors = FALSE) # This is necessary for the WGCNA code to run
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/5. Robust DLPFC-Sz lmer.Rdata") # Contains:
+#   Data           # The expression array dataset restricted to Sz and controls
+#   Pheno          # The subject phenotype data
+#   IlluminaProbes # The array annotation provided by Illumina
+#   hits           # Statistically significant results after Boneferroni correction (P-values are Boneferroni corrected)
+#   Results        # Full results file. (P-values are not Boneferonni corrected)
+
+DEprobes = row.names(hits)
+```
+
+# Restrict expression array data to the schizophrenics only and to the differentially expressed probes
+
+### Important note:  We are reusing the variable names "Data" and "Pheno"
+```{r Restrict_data, cache=FALSE}
+Data.sav = Data
+Data = Data[Pheno$Dx == "Schizo",DEprobes]
+
+Pheno.sav = Pheno
+Pheno = Pheno[Pheno$Dx == "Schizo",]
+```
+
+# Calculate residuals using rlmer
+In other words, adjust for age, sex, RIN, etc.
+
+```{r lmer_saving_residuals}
+# This block of code will take several hours to run
+# Create a matrix of the correct size and with the correct row and column names in which we will store the residuals
+Residuals = Data # Just to create a matrix of the correct size and with the correct row and column names
+Residuals[,] = NA # Don't forget the "[,]".  Otherwise Residuals will become a vector of length 1
+
+Dx = Pheno$Dx       # Dx is a factor
+Batch = Pheno$BATCH # Batch is a factor
+RIN = Pheno$RIN     # RIN is numeric
+Sex = Pheno$Gender  # Sex is a factor 
+Race = Pheno$Race   # Race is a factor with levels "AA", "CAUC", and "Other"
+Age = Pheno$Age     # Age is numeric
+
+for (i in 1:ncol(Data)) {
+    Model = tryCatch(rlmer(Data[,i] ~ (1|Batch) + RIN + Sex + Race + Age), warning = function(w) w)
+    # If there are no warnings, tryCatch will return the S4 object returned by rlmer
+    # If there is a warning, that column of Residuals will contain "NA"
+
+    if (typeof(Model) == "S4") {Residuals[,i] = residuals(Model)} 
+}
+```
+
+# Delete those probes for which rlmer failed
+```{r Delete_failures, cache=FALSE}
+Failure = apply(Residuals, 2, anyNA)
+FailedProbes = colnames(Residuals)[Failure]
+FailedGenes = as.character(IlluminaProbes[FailedProbes,"Symbol"])
+names(FailedGenes) = FailedProbes
+Residuals = Residuals[,!Failure]
+print("rlmer failed for the following probes \n")
+FailedGenes
+```
+
+There were `r sum(Failure)` probes for which rlmer failed to converge, leaving a total of `r ncol(Residuals)` probes to differentially expressed transcripts for further analysis.
+
+# Convert "Residuals" to Z-scores
+```{r Z_score, cache=FALSE}
+ScaledResiduals = scale(Residuals)
+```
+
+Choose $\beta$ as described in Hovarth's tutorial 2a (http://labs.genetics.ucla.edu/horvath/CoexpressionNetwork/Rpackages/WGCNA/Tutorials/FemaleLiver-02-networkConstr-auto.pdf)
+```{r WGCNA, cache=FALSE, results='hide', message=FALSE}
+powers = c(c(1:10), seq(from = 12, to=20, by=2)) # Choose a set of soft-thresholding powers
+sft = pickSoftThreshold(t(ScaledResiduals), powerVector = powers, verbose = 5) # Call the network topology analysis function 
+```
+
+# Plot the results
+```{r WGCNA_plot_beta, cache=FALSE}
+op = par(mfrow = c(1,2)); cex1 = 0.9; 
+# Scale-free topology fit index as a function of the soft-thresholding power 
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n", 
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], labels=powers,cex=cex1,col="red");
+abline(h=0.90,col="red") # this line corresponds to using an R^2 cut-off of h 
+
+# Mean connectivity as a function of the soft-thresholding power 
+plot(sft$fitIndices[,1], sft$fitIndices[,5], xlab="Soft Threshold (power)",ylab="Mean Connectivity", 
+     type="n", main = paste("Mean connectivity")) 
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+
+We'll use a  $\beta$ of 5.
+
+```{r Run_WGCNA, cache=FALSE, results='signed', message=FALSE}
+Radj = adjacency(t(ScaledResiduals), type="signed", power=5)
+Rtom = TOMsimilarity(Radj)
+RdissTOM = 1 - Rtom
+geneTree = hclust(as.dist(RdissTOM), method = "average"); # Call the hierarchical clustering function
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = RdissTOM,
+    deepSplit = 2, pamRespectsDendro = FALSE);
+
+# Add row and column names to Rtom
+colnames(Rtom) = row.names(Residuals)
+row.names(Rtom) = row.names(Residuals)
+```
+
+```{r Display_WGNCA, cache=FALSE}
+table(dynamicMods)
+
+dynamicColors = labels2colors(dynamicMods) # Convert numeric labels from the "dynamicMods" into colors
+Plot.colors = data.frame(dynamicColors) # This is where we add a second color bar if we want
+
+# Plot the dendrogram and colors underneath
+plotDendroAndColors(geneTree, colors=Plot.colors, 
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05,
+main = "WGCNA clustering of schizophrenics")
+par(op)
+```
+
+This divides the schizophrenics into two groups. 
+
+# Make character vectors containing the subject IDs for the type 1 and type 2 schizophrenics
+```{r Subtypes, cache=FALSE}
+Type1 = row.names(Residuals)[dynamicColors == "turquoise"]
+Type2 = row.names(Residuals)[dynamicColors == "blue"]
+```
+
+# Save
+```{r Save}
+Data = Data.sav
+Pheno = Pheno.sav
+SzDEprobeResiduals = Residuals
+save(file="0._Rdata_files/6a. Cluster Schizophrenics.Rdata",
+    Data,               # The expression array dataset restricted to Sz and controls
+    Pheno,              # The subject phenotype data
+    IlluminaProbes,     # The array annotation provided by Illumina 
+    DEprobes,
+    Type1,              # Subject IDs of the type 1 schizophrenics
+    Type2,              # Subject IDs of the type 2 schizophrenics
+    SzDEprobeResiduals, # The unscaled residuals after using linear regression to correct the expression array data for the covariates (Batch, RIN, Age, etc.). This is data for the DEprobes only with the linear regression done on the schizophrenics only
+    FailedGenes,
+    Rtom                # WGCNA similarity matrix for schizophrenics
+)
+```
+
+
+```{r}
+sessionInfo()
+```

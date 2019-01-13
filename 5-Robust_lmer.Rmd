@@ -1,0 +1,162 @@
+---
+title: "Robust mixed linear regression comparing schizophrenics with controls"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+There are several R packages implementing robust methods for linear regression, and at least two of them, "lqmm" "robustlmm" support mixed effect models (see https://CRAN.Rproject.org/view=Robust). At this point we don't have any good reason to choose one over the other.
+
+The model for this analysis includes the intercept, but not the slope for the random effect variable "Batch". In this analysis "Batch" refers to the 81 Illumina slide-defined batches.
+
+Note: There are other versions of this dataset in which "Batch" is defined based on the date the array was run. That information is not included in the data deposited with dbGaP.
+
+The "Warning" field in "Results" is used to trap warnings generated when rlmer{robustlmm} failed to converge.
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE}
+library(robustlmm) # Library for robust mixed effects models
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/4. DLPFC-Sz dataset.Rdata") # This file was written by analysis 4. Contains:
+#   Data           # The normalized, vst-transformed expression array data restricted to Sz and controls
+#   Pheno          # The subject phenotype data 
+#   IlluminaProbes # The array documentation from Illumina
+```
+
+# Run mixed linear regression
+```{r Mixed_linear_regression, cache=FALSE}
+#Technical confounds
+Batch = as.factor(Pheno$BATCH)
+RIN = Pheno$RIN
+
+#Biologic covariates
+Dx = as.factor(Pheno$Dx)
+Sex = as.factor(Pheno$Gender)
+Race = as.factor(Pheno$Race)
+Age = Pheno$Age
+ 
+# Warnings will be set to TRUE for each probe where rlmer() generates a warning
+# P_values will containg the P-value for Dx in each mixed regression
+# Beta will be the estimated regression coefficient
+Results = data.frame(matrix(nrow=ncol(Data), ncol=3, 
+              dimnames = list(colnames(Data), c("Beta", "P_value", "Warning"))))
+Results[,] = NA
+
+Residuals = Data # Just to get a matrix of the proper size with the  row and column names
+Residuals[,] = NA
+
+for (i in 1:ncol(Data)) {
+    # Calculation of the P-value for a mixed linear regression is not trival because it's not obvious how many degrees of freedom the reference t distribution has. The approach we are using here of approximating a t-distribution with many degrees of freedom as a normal distribution is unambiguously anti-conservative, but we have so many samples that it is still reasonable to us it at this stage of the analysis where we are screening the thousands of probes to find the important ones.
+
+    Model = tryCatch(rlmer(Data[,i] ~ Dx +(1|Batch) + RIN + Sex + Race + Age),
+               warning =  function(w) w, error = function(e) e)
+    # If there are no warnings, tryCatch will return the S4 object returned by rlmer.
+    # If there is a warning, tryCatch will return a list containing the warning 
+
+    if (typeof(Model) == "S4") {
+        coefs = data.frame(coef(summary(Model)))
+        t_value = coefs["DxSchizo", "t.value"]
+        Results[i,"P_value"] = 2 * (1 - pnorm(abs(t_value))) * ncol(Data)
+        Results[i,"Beta"] = coefs["DxSchizo", "Estimate"]
+        Residuals[,i] = residuals(Model)
+    } else {
+        Results[i,"Warning"] = as.character(Model)
+        Results[i, "Beta"] = 0
+        Results[i,"P_value"] = 1
+    }
+}
+Symbol = IlluminaProbes[row.names(Results),"Symbol"]
+Results = cbind(Symbol,Results)
+```
+
+
+```{r Significant_results}
+hits = Results[Results$P_value < 0.05,]
+hits = hits[order(hits$P_value),]
+print("Most statistically significant results")
+hits[1:25,]
+
+hits = hits[order(abs(hits$Beta), decreasing = TRUE),]
+print("\n Probes with largest effect size")
+hits[1:25,]
+```
+
+The P-values above are Bonferroni corrected.   
+   
+There are a total of `r nrow(hits)` probes to `r length(unique(hits$Symbol))` genes which are differentially expressed at a level of statistical significance which survives Bonferroni correction. Of those, `r sum(Results$P_value < 1e-8)` have a Bonferroni-corrected P-value of less than 1e-08.
+
+# Probes for which rlmer failed to converge.
+There were `r sum(!is.na(Results$Warning))` probes for which rlmer() failed to converge. The fact that it failed to converge suggests that a least-squares based algorithm might very well be driven by outliers and give an erroneous result. However, it says nothing about whether or not those transcripts are differentially expressed. Therefore, in spite of the good theoretical reasons not to use lmer() for this purpose, we will re-analyze that data with lmer() and identify those transcripts whose differential expression appears to be significant at a level which survives Bonferroni correction.  
+
+```{r rlmer_failures, cache=FALSE}
+Results.fail = row.names(Results[!is.na(Results$Warning),])
+Data.warn = Data[,Results.fail]
+
+#Technical confounds
+Batch = as.factor(Pheno$BATCH)
+RIN = Pheno$RIN
+
+#Biologic covariates
+Dx = as.factor(Pheno$Dx)
+Sex = as.factor(Pheno$Gender)
+Race = as.factor(Pheno$Race)
+Age = Pheno$Age
+ 
+# P_values will containg the P-value for Dx in each mixed regression
+# Beta will be the estimated regression coefficient
+Results.warn = data.frame(matrix(nrow=ncol(Data.warn), ncol=3, 
+         dimnames = list(colnames(Data.warn), c("Beta", "P_value", "Warning"))))
+Results.warn[,] = NA
+
+for (i in 1:ncol(Data.warn)) {
+    # Calculation of the P-value for a mixed linear regression is not trival because it's not obvious how many degrees of freedom the reference t distribution has. The approach we are using here of approximating a t-distribution with many degrees of freedom as a normal distribution is unambiguously anti-conservative, but we have so many samples that it is still reasonable to us it at this stage of the analysis where we are screening the thousands of probes to find the important ones.
+  
+    Model = tryCatch(lmer(Data.warn[,i] ~ Dx + (1|Batch) + RIN + Sex + Race + Age), warning = function(w) w)
+    # If there are no warnings, tryCatch will return the S4 object returned by lmer.
+    # If there is a warning, tryCatch will return a list containing the warning, but that is unlikely since we are using lmer(), not rlmer().
+
+    if (typeof(Model) == "S4") {
+        coefs = data.frame(coef(summary(Model)))
+        t_value = coefs["DxSchizo", "t.value"]
+        Results.warn[i,"P_value"] = 2 * (1 - pnorm(abs(t_value))) * ncol(Data)
+        Results.warn[i,"Beta"] = coefs["DxSchizo", "Estimate"]
+    } else {
+        Results.warn[i,"Warning"] = as.character(Model)
+        Results.warn[i, "Beta"] = 0
+        Results.warn[i,"P_value"] = 1
+    }
+}
+Symbol = IlluminaProbes[row.names(Results.warn),"Symbol"]
+Results.warn = cbind(Symbol,Results.warn)
+
+hits.warn = Results.warn
+hits.warn = hits.warn[hits.warn$P_value < 0.05,]
+hits.warn = hits.warn[order(hits.warn$P_value),]
+hits.warn$Warning = "Robust lmer() failed to converge"
+hits.warn[,1:3]
+```
+
+The P-values above are Bonferroni-corrected.   
+This analysis is done primarily to emphasize that we do not at this point know whether these probes are differentially expressed or not. If the specific genes are biologically interesting, further study is warrented.
+
+# Save the results
+```{r}
+save(file="0._Rdata_files/5. Robust DLPFC-Sz lmer.Rdata", 
+  Data,           # The expression array dataset restricted to Sz and controls
+  Pheno,          # The subject phenotype data
+  IlluminaProbes, # The array annotation provided by Illumina
+  hits,           # Statistically significant results after Boneferroni correction (P-values are Boneferroni corrected)
+  Results,        # Full results file. (P-values are not Boneferonni corrected)
+  Residuals)      # Residuals after correction for covariates
+
+write.csv(hits, file = "0._Rdata_files/5. Robust hits.csv")
+```
+
+
+```{r}
+sessionInfo()
+```

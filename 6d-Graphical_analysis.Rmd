@@ -1,0 +1,153 @@
+---
+title: "Graph the relationships among the schizophrenics"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+In this analysis we examine the demographics of the type 1 vs type 2 schizophrenics defined at different levels of perturbation stability (error tolerated in residuals used to classify the patients)
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, results='hide'}
+library("igraph")  
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+# Load DLPFC data
+
+# All we need from this file is Rtom
+load(file="0._Rdata_files/6a. Cluster Schizophrenics.Rdata") # Contains:
+#   Data               # The expression array dataset restricted to Sz and controls
+#   Pheno              # The subject phenotype data
+#   IlluminaProbes     # The array annotation provided by Illumina 
+#   DEprobes
+#   Type1              # Subject IDs of the type 1 schizophrenics
+#   Type2              # Subject IDs of the type 2 schizophrenics
+#   SzDEprobeResiduals # The unscaled residuals after using linear regression to correct the expression array data for the covariates (Batch, RIN, Age, etc.).  This is data for the DEprobes only with the linear regression done on the schizophrenics only
+#   FailedGenes
+#   Rtom               # WGCNA similarity matrix for schizophrenics
+
+rm(list = setdiff(ls(), "Rtom"))
+
+load(file="0._Rdata_files/6b - Perturbation stability of subtype.Rdata") # Contains:
+#   Type1MultipleErrors # Table with the percent of times each schizophrenic was scored as "Type1" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+#   Type2MultipleErrors # Table with the percent of times each schizophrenic was scored as "Type2" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+#   Data                # The expression array dataset restricted to Sz and controls
+#   Pheno               # The subject phenotype data including imputed subtype
+#   IlluminaProbes      # The array annotation provided by Illumina 
+#   DEprobes
+#   SzDEprobeResiduals  # The unscaled residuals after using robust mixed linear regression to correct the expression array data for the measured covariates (Batch, RIN, Age, etc.).  This is data for the DEprobes only with the linear regression done on the schizophrenics only. There were no imputed covariates included in the linear regression which was part of analysis 6a
+
+Pheno = Pheno[Pheno$Dx == "Schizo",] # restrict "Pheno" to the schizophrenics only
+```
+
+# Graph the schizophrenics at multiple thresholds used to define the presence of edges and at multiple robustness levels used to assign the subtype. The nodes are colored based on their assigned subtype:   
+
+Blue:       Subtype 1
+Red:        Subtype 2
+White:      Mixed at a particular robustness level
+
+```{r Graph0.1, cache=FALSE}
+Threshold = c(0.05,  0.07,  0.09, 0.12)
+for (i in 1:4) {
+    AdjMatrix = matrix(data=0,nrow=nrow(Rtom), ncol = nrow(Rtom))
+    diag(Rtom) = 0
+    
+    AdjMatrix[Rtom > Threshold[i]] = 1
+    
+    Graph0 = graph_from_adjacency_matrix(adjmatrix = AdjMatrix, diag = FALSE, mode = "upper")
+    
+    Color = vector(mode = "character", length = nrow(Rtom))
+    
+    Color[Pheno$Subtype_50 == "Type1"] = "blue"
+    Color[Pheno$Subtype_50 == "Type2"] = "red"
+    Color[Pheno$Subtype_50 == "Mixed"] = "white"
+
+    set.seed(1)
+    layout = layout.drl(Graph0)
+    plot(Graph0, vertex.size=4, vertex.label=NA, vertex.color=Color, main=paste("Robustness level 0.50 \n Threshold: ", Threshold[i]))
+}
+```
+
+We conclude that WGCNA mis-assigns several schizophrenics and that the algorithm could probably be improved by replacing the use of hierarchical clustering (hclust) with a  graph theoretical community-detection algorithm.
+
+#What happens at a robustness level of 0.25?
+```{r Graph0.2, cache=FALSE}
+for (i in 1:9) {
+    AdjMatrix = matrix(data=0,nrow=nrow(Rtom), ncol = nrow(Rtom))
+    diag(Rtom) = 0
+    
+    AdjMatrix[Rtom > Threshold[i]] = 1
+    
+    Graph0 = graph_from_adjacency_matrix(adjmatrix = AdjMatrix, diag = FALSE, mode = "upper")
+    
+    Color = vector(mode = "character", length = nrow(Rtom))
+    
+    Color[Pheno$Subtype_25 == "Type1"] = "blue"
+    Color[Pheno$Subtype_25 == "Type2"] = "red"
+    Color[Pheno$Subtype_25 == "Mixed"] = "white"
+
+    set.seed(1)
+    layout = layout.drl(Graph0)
+    plot(Graph0, vertex.size=4, vertex.label=NA, vertex.color=Color, main=paste("Robustness level of 0.25 \n Threshold: ", Threshold[i]))
+}
+```
+
+This looks pretty good. The schizophrenics who, compared to a robustness level of 0.50 are shifted from "mixed" to either type 1 or type 2 are clustering with the others of that type.
+
+#What happens at a robustness level of 0?
+```{r Graph0.3, cache=FALSE}
+for (i in 1:9) {
+    AdjMatrix = matrix(data=0,nrow=nrow(Rtom), ncol = nrow(Rtom))
+    diag(Rtom) = 0
+    
+    AdjMatrix[Rtom > Threshold[i]] = 1
+    
+    Graph0 = graph_from_adjacency_matrix(adjmatrix = AdjMatrix, diag = FALSE, mode = "upper")
+    
+    Color = vector(mode = "character", length = nrow(Rtom))
+    
+    Color[Pheno$Subtype == "Type1"] = "blue"
+    Color[Pheno$Subtype == "Type2"] = "red"
+    Color[Pheno$Subtype == "Mixed"] = "white"
+
+    set.seed(1)
+    layout = layout.drl(Graph0)
+    plot(Graph0, vertex.size=4, vertex.label=NA, vertex.color=Color, main=paste("Robustness level of 0.0 \n Threshold: ", Threshold[i]))
+}
+```
+
+Now for the first time we have a schizophrenic who is truely mixed being assigned as type 1.
+
+# Repeat coloring all the "Mixed" schizophrenics (pink or light blue in the above graphs) as white
+```{r Graph1, cache=FALSE}
+for (i in 1:9) {
+    AdjMatrix = matrix(data=0,nrow=nrow(Rtom), ncol = nrow(Rtom))
+    diag(Rtom) = 0
+    
+    AdjMatrix[Rtom > Threshold[i]] = 1
+    
+    Graph0 = graph_from_adjacency_matrix(adjmatrix = AdjMatrix, diag = FALSE, mode = "upper")
+    
+    Color = vector(mode = "character", length = nrow(Rtom))
+    
+    Color[Pheno$Subtype_50 == "Type1"] = "blue"
+    Color[Pheno$Subtype_50 == "Type2"] = "red"
+    Color[Pheno$Subtype_50 == "Mixed"] = "white"
+    
+    set.seed(1)
+    layout = layout.drl(Graph0)
+    plot(Graph0, vertex.size=4, vertex.label=NA, vertex.color=Color, main=paste("Edge threshold: ", Threshold[i]))
+}
+```
+
+We see that using the robustness criterion of 0.50 results in several schizophrenics who should probably be classified as either type 1 or type 2 being called "mixed". 
+
+However the important point is that all of the schizophrenics called type 1 or type 2 really are type 1 or type 2.
+
+
+```{r}
+sessionInfo()
+```

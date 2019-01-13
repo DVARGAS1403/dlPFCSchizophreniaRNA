@@ -1,0 +1,154 @@
+---
+title: "Schizophrenia cohort demographics"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+In this analysis we will restrict the DLPFC dataset to the control and schizophrenic subjects only and examine the demographics of that restricted cohort.
+
+# Load data and libraries
+```{r Load_Data, cache=FALSE}
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/3. DLPFCdataset.Rdata") #This file was written by analysis 3. Contains:
+#   DLPFCdata  # A matrix containing the log2-transformed data,
+#   Phenotypes # A dataframe containing the subject phenotypes 
+
+IlluminaProbes = read.csv(file="resources/Illumina probes.csv", header = TRUE, row.names = 1) # This is the array documentation from Illumina
+```
+
+The cohort consists of `r nrow(Phenotypes)`
+
+# Restrict the dataset to the controls and schizophrenics
+```{r Sz_only, cache=FALSE}
+# The diagnosis information is in the character vector "Phenotypes$NewDx"
+Dx = Phenotypes$NewDx
+Phenotypes = Phenotypes[(Dx == "Control") | (Dx == "Schizo"),]
+Data = DLPFCdata[,(Dx == "Control") | (Dx == "Schizo")]
+Dx = as.factor(Dx[(Dx == "Control") | (Dx == "Schizo")])
+```
+
+This reduces the size of the cohort to `r nrow(Phenotypes)` individuals.
+
+# Examine the age distribution and restrict the cohort to adults
+```{r Age, cache=FALSE}
+Age = as.numeric(Phenotypes$AgeDeath)
+hist(Age[Dx == "Control"], breaks = 50, col = "red",
+     main="Control: red \n Schizophrenic: blue", xlab = "Age")
+hist(Age[Dx == "Schizo"], breaks=50, add=T, col=rgb(0, 0, 1, 0.5) )
+abline(v = 25, col="black")
+
+# There are 43 subjects for whom "Phenotypes$AgeDeath" is given as "". As a result "Age" is NA for them. We will censor those subjects and the subjects younger than 25.
+Discard = Age < 25 | is.na(Age)
+Phenotypes = Phenotypes[!Discard,]
+Data = Data[,!Discard]
+Dx = Dx[!Discard]
+Age = Age[!Discard]
+```
+
+After restricting the cohorts to adults, the age distribution in the controls and schizophrenics is more or less the same, with a total of `r sum(Dx == "Schizo")` schizophrenics and `r sum(Dx == "Control")` controls.
+
+```{r Age-2, cache=FALSE}
+hist(Age[Dx == "Schizo"], 
+     breaks = seq(from=20, to=100, by=5), 
+     col = "red",
+     main="Schizophrenic: red \n Control: blue", 
+     xlab = "Age")
+hist(Age[Dx == "Control"], add=T,
+     breaks = seq(from=20, to=100, by=5), 
+     col = rgb(0, 0, 1, 0.5))
+```
+
+After restriction of the dataset to subjects 25 y/o or older, the ethnic distribution of the subjects and controls is:
+```{r Ethnicity, cache=FALSE, echo=FALSE}
+table(Phenotypes$Race, Phenotypes$NewDx)
+```
+
+Because there are so few Asians and Hispanics in the cohort we will pool them as "Other".
+
+```{r Race_as_Other, cache=FALSE}
+Race = Phenotypes$Race
+Phenotypes$Race[(Race == "AS") | (Race == "HISP")] = "Other"
+Race = as.factor(Phenotypes$Race)
+table(Race, Dx)
+```
+
+Note that the cohort is not balanced with respect to race. Specifically, the controls are slightly under-represented in the Caucasian population. 
+
+# Examine distribution of the subjects by gender
+```{r}
+table(Phenotypes$Gender, Dx)
+```
+
+As might be expected in a Medical Examiner cohort where the control subjects include accidental death and homocide victims, men are somewhat over-represented in the controls.  
+
+For some reason that imbalance is much more prominent in the Caucasian than African American sub-cohorts.  
+
+### Caucasian only  
+```{r}
+table(Phenotypes$Gender[Race == "CAUC"], Dx[Race == "CAUC"])
+```
+
+### African Americans
+```{r}
+table(Phenotypes$Gender[Race == "AA"], Dx[Race == "AA"])
+```
+ 
+**This gender x race interaction is something which should be kept in mind if either gender or race are critical covariates in the final results.**
+
+# RIN
+```{r RIN, cache=FALSE}
+Phenotypes$RIN = as.numeric(as.character(Phenotypes$RIN))
+hist(Phenotypes$RIN[Dx == "Schizo"], 
+     breaks = seq(from=4, to=10, by=0.3), 
+     probability = "TRUE",
+     col = "red",
+     main="Schizophrenic: red \n Control: blue", 
+     ylim=c(0,1),
+     xlab = "RIN")
+hist(Phenotypes$RIN[Dx == "Control"], add=T,
+     breaks = seq(from=4, to=10, by=0.3), 
+     probability = "TRUE",
+     col = rgb(0, 0, 1, 0.5))
+
+t.test(Phenotypes$RIN ~ Phenotypes$NewDx)
+t.test(Phenotypes$RIN[Phenotypes$NewDx == "Schizo"], Phenotypes$RIN[Phenotypes$NewDx == "Control"]);
+wilcox.test(Phenotypes$RIN[Phenotypes$NewDx == "Schizo"], Phenotypes$RIN[Phenotypes$NewDx == "Control"]);
+```
+
+# Format the phenotype dataframe to include only the relavent information and the correct data types.
+```{r Format_Pheno, cache=FALSE}
+Pheno = Phenotypes[,c("NewDx", "AgeDeath", "Gender", "Race", "CauseDeath", "RIN", "BATCH")]
+colnames(Pheno) = c("Dx", "Age", "Gender", "Race", "CauseDeath", "RIN", "BATCH")
+Pheno$Dx = as.factor(Pheno$Dx)
+Pheno$Age = as.numeric(Pheno$Age)
+Pheno$Gender = as.factor(Pheno$Gender)
+Pheno$Race = as.factor(Pheno$Race)
+Pheno$RIN = as.numeric(Pheno$RIN)
+Pheno$BATCH = as.factor(Pheno$BATCH)
+```
+
+# Transpose the expression array data
+Transpose the expression array data to put it into the format expected by most R functions with the subjects as rows and the probes as columns.
+```{r Transpose_data, cache=FALSE}
+Data = t(Data)
+```
+
+We are now ready to begin the analysis of this limited dataset restricted to the DLPFC data from the controls and schizophrenics.
+
+# Save the results
+```{r}
+save(file="0._Rdata_files/4. DLPFC-Sz dataset.Rdata", 
+     Data,          # The normalized, log2-transformed expression array data restricted to Sz and controls
+     Pheno,         # The subject phenotype data 
+     IlluminaProbes # The array annotation from Illumina
+     )
+```
+
+
+```{r}
+sessionInfo()
+```

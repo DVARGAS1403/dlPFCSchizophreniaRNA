@@ -1,0 +1,113 @@
+---
+title: "Identification of transcripts differentially expressed in Type 1 schizophrenics as compared to controls"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+This analysis uses robust mixed linear regression to identify the Illumina probes which detect transcripts differentially expressed in the DLPFC of type 1 schizophrenics as compared to controls. For the purposes of this analysis type 1 schizophrenics are restricted to those whose identification as type 1 was robust in the setting of a random error of 0.50 SD for the residuals used to classify the patients.
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, results='hide'}
+library(robustlmm) # Library for robust mixed effects models
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+# Load DLPFC data
+load(file = "0._Rdata_files/6b - Perturbation stability of subtype.Rdata") # Contains:
+#   Type1MultipleErrors # Table with the percent of times each schizophrenic was scored as "Type1" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+#   Type2MultipleErrors # Table with the percent of times each schizophrenic was scored as "Type2" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+#   Data                # The expression array dataset restricted to Sz and controls
+#   Pheno               # The subject phenotype data including imputed subtype
+#   IlluminaProbes      # The array annotation provided by Illumina 
+#   DEprobes
+#   SzDEprobeResiduals  # The unscaled residuals after using robust mixed linear regression to correct the expression array data for the measured covariates (Batch, RIN, Age, etc.). This is data for the DEprobes only with the linear regression done on the schizophrenics only. There were no imputed covariates included in the linear regression which was part of analysis 6a
+
+# Read the reannotation from Arloth 2015
+Re_annotation = read.csv(file = "resources/Re-annotation of humanHt12v4.txt",
+                       sep="\t",
+                       header = TRUE,
+                       row.names = 1,
+                       stringsAsFactors = FALSE)
+```
+
+# Run mixed linear regression on Type 1 schizophrenics and controls
+```{r Mixed_linear_regression1, cache=FALSE}
+date()
+
+# Restrict the analysis to the controls and "Subtype_50" type 1 schizophrenics
+keep = (Pheno$Subtype_50 == "Control") | (Pheno$Subtype_50 == "Type1")
+
+#Technical confounds
+Batch = as.factor(Pheno$BATCH)[keep]
+RIN = Pheno$RIN[keep]
+
+#Biologic covariates
+Dx = as.factor(Pheno$Dx)[keep]
+Sex = as.factor(Pheno$Gender)[keep]
+Race = as.factor(Pheno$Race)[keep]
+Age = Pheno$Age[keep]
+ 
+# Warnings will be set to TRUE for each probe where rlmer() generates a warning
+# P_values will containg the P-value for Dx in each mixed regression
+# Beta will be the estimated regression coefficient
+Results = data.frame(matrix(nrow=ncol(Data), ncol=4, 
+              dimnames = list(colnames(Data), c("Beta", "t.value", "P_value", "Warning"))))
+Results[,] = NA
+for (i in 1:ncol(Data)) {
+    # Calculation of the P-value for a mixed linear regression is not trival because it's not obvious how many degrees of freedom the reference t distribution has. The approach we are using here of approximating a t-distribution with many degrees of freedom as a normal distribution is unambiguously anti-conservative, but we have so many samples that it is still reasonable to us it at this stage of the analysis where we are screening the thousands of probes to find the important ones.
+  
+    Model = tryCatch(rlmer(Data[keep, i] ~ Dx + (1|Batch) + RIN + Sex + Race + Age),
+               warning = function(w) w, error = function (e) e)
+    # If there are no warnings, tryCatch will return the S4 object returned by rlmer
+    # If there is a warning, tryCatch will return a list containing the warning 
+
+    if (typeof(Model) == "S4") {
+        coefs = data.frame(coef(summary(Model)))
+        t_value = coefs["DxSchizo", "t.value"]
+        Results[i, "t.value"] = t_value
+        Results[i,"P_value"] = 2 * (1 - pnorm(abs(t_value))) * ncol(Data)
+        Results[i,"Beta"] = coefs["DxSchizo", "Estimate"]
+    } else {
+        Results[i,"Warning"] = as.character(Model)
+        Results[i, "Beta"] = 0
+        Results[i,"P_value"] = 1
+    }
+}
+date()
+```
+
+
+```{r Annotate1, cache=FALSE}
+Symbol = IlluminaProbes[row.names(Results),"Symbol"]
+Symbol2 = Re_annotation[row.names(Results),"Gene_symbol"]
+Results = cbind(Symbol,Symbol2,Results)
+Results_1 = Results
+hits = Results[!is.na(Results$Beta),]
+hits = hits[hits$P_value < 0.05,]
+hits = hits[order(hits$P_value),]
+hits
+Type1Hits = hits
+```
+
+"Symbol" is the gene symbol as provided in the original array documentation from Illumina. "Symbol2" is the gene symbol from the re-annotation of the array by Arloth et al. (2015).
+
+There are `r nrow(hits)` probes to `r length(unique(hits$Symbol))` genes which differentially expressed in type 1 schizophrenics as compared to controls at a level of statistical significance which survives Bonferroni correction.
+
+# Save results
+```{r Save}
+save(file="0._Rdata_files/7a. Sz subtype 1 lmer.Rdata",
+    Data,           # The normalized, log2-transformed expression array data restricted to Sz and controls
+    Pheno,          # The subject phenotype data including Dx subtypes
+    IlluminaProbes, # The array annotation from Illumina
+    Re_annotation,  # The reannotation from Arloth 2015
+    Results_1,
+    Type1Hits)
+```
+
+
+```{r}
+sessionInfo()
+```

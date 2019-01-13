@@ -1,0 +1,157 @@
+---
+title: "Figures and tables"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+This block of code prints the results of 7a and 7b (robust mixed linear regression of the type 1 and type 2 schizophrenics) as csv files and generates some figures for the manuscript
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, results='hide'}
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/5. Robust DLPFC-Sz lmer.Rdata") # Contains:
+#  Data           # The expression array dataset restricted to Sz and controls
+#  Pheno          # The subject phenotype data
+#  IlluminaProbes # The array annotation provided by Illumina
+#  hits           # Statistically significant results after Boneferroni correction (P-values are Boneferroni corrected)
+#  Results        # Full results file (P-values are not Boneferonni corrected)
+#  Residuals      # Residuals after correction for covariates
+DEprobes = hits
+
+# Load 7a and 7b to get the list of differentially expressed genes
+# We are intentionally overwriting "Data", "Pheno", and "IlluminaProbes". File 7b has identical copies of "Data" and "IlluminaProbes"; "Pheno" has been updated
+
+load(file="0._Rdata_files/7a. Sz subtype 1 lmer.Rdata") # Contains:
+#    Data           # The normalized, log2-transformed expression array data restricted to Sz and controls
+#    Pheno          # The subject phenotype data including Dx subtypes
+#    IlluminaProbes # The array annotation from Illumina
+#    Re_annotation  # The reannotation from Arloth 2015
+#    Results_1
+#    Type1Hits
+Type1Hits[,3] = round(Type1Hits[,3], digits = 4);
+Type1Hits[,5] = signif(Type1Hits[,5], digits = 4);
+write.csv(Type1Hits, file="Type1Hits_elimodified.csv")
+
+load(file="0._Rdata_files/7b. Sz subtype 2 lmer.Rdata") # Contains:
+#    Data           # The normalized, log2-transformed expression array data restricted to Sz and controls
+#    Pheno          # The subject phenotype data including Dx subtypes
+#    IlluminaProbes # The array annotation from Illumina
+#    Re_annotation  # The reannotation from Arloth 2015
+#    Results_2
+#    Type2Hits
+Type2Hits[,3] = round(Type2Hits[,3], digits = 4);
+Type2Hits[,5] = signif(Type2Hits[,5], digits = 4);
+write.csv(Type2Hits, file="Type2Hits_elimodified.csv");
+```
+
+There are a total of `r nrow(Type1Hits)` probes to transcripts differentially expressed in the Type 1 schizophrenics as compared to the controls.
+
+```{r Print_top_Type1Hits, cache=FALSE}
+index = order(Type1Hits$P_value, decreasing = FALSE)
+Type1Hits = Type1Hits[index,]
+foo = Type1Hits[, c(2,3,5)]
+foo[,2:3] = round(foo[,2:3], digits = 4)
+foo
+```
+
+There are a total of `r nrow(Type2Hits)` probes to transcripts differentially expressed in the Type 2 schizophrenics as compared to the controls. Of these `r sum(row.names(Type1Hits) %in% row.names(Type2Hits))` are also differentially expressed in the Type 1 schizophrenics
+
+```{r Print_top_Type2Hits, cache=FALSE}
+index = order(Type2Hits$P_value, decreasing = FALSE)
+Type2Hits = Type2Hits[index,]
+foo = Type2Hits[1:25,c(2,3,5)]
+foo[,2:3] = round(foo[,2:3], digits = 4)
+foo
+
+index = order(Type2Hits$Beta, decreasing = TRUE)
+Type2Hits = Type2Hits[index,]
+foo = Type2Hits[1:25,c(2,3,5)]
+foo[,2] = round(foo[,2], digits = 4)
+foo[,3] = signif(foo[,3], digits = 4)
+foo
+
+index = order(Type2Hits$Beta, decreasing = FALSE)
+Type2Hits = Type2Hits[index,]
+foo = Type2Hits[1:25,c(2,3,5)]
+foo[,2] = round(foo[,2], digits = 4)
+foo[,3] = signif(foo[,3], digits = 4)
+foo
+```
+
+```{r}
+# "GABA" and "Other" markers selected by Allen Institute
+GABAmarkers = c(  
+"GAD1",   
+"GAD2",   
+"SLC32A1")    # GABA/glycine vesicular transporter  
+  
+OtherMarkers = c( 
+"SLC17A6",    # VGLUT2 (Spiny neurons of layer IV) 
+"SLC17A7",    # VGLUT1 (Pyramidal neurons) 
+"OLIG1",      
+"GJA1",   
+"XDH",    
+"CTSS",   
+"MYL9")   
+
+ZeiselIntneuronMarkers = c( 
+"SEMA3E",   
+"GDA",    
+"CXCL14",   
+"PAX6",   
+"CRH",    
+"SLC5A7",   
+"CPNE5",    
+"NOV",    
+"RGS10",    
+"KCNIP2",   
+"LPHN2",    
+"PDE1A",    
+"CALB2",      # Calretinin    
+"LHX6",   
+"NPY",    
+"CCK",    
+"RELN",   
+"VIP",    
+"HTR3A",    
+"SST",        # Somatostatin    
+"PVALB",    
+"GAD1")   
+
+AdditionalMakers = c( 
+"TAC1",     
+"NOS1",     
+"CALB1",    
+"CHAT",     
+"TH")   
+
+SelectedMarkers = c(GABAmarkers, OtherMarkers, ZeiselIntneuronMarkers, AdditionalMakers)
+
+Type2Hits[Type2Hits$Symbol2 %in% SelectedMarkers, c(2,3,5)]
+```
+
+# Create figures
+```{r Create_figures, cache=FALSE}
+# Restrict figures to subjects classified as "Control", "Type1", or "Type2" (exclude "Mixed").
+Restricted.Data = Data[Pheno$Subtype_50 != "Mixed",]
+Restricted.Pheno = Pheno[Pheno$Subtype_50 != "Mixed",]
+
+Gene = c("NPY", "TAC1", "NR4A2", "BAG3", "NDUFB2")
+for (i in 1:length(Gene)) {
+    Probe = row.names(Type2Hits)[Type2Hits$Symbol == Gene[i]]
+    if (length(Probe) == 1) {
+        boxplot(Restricted.Data[,Probe] ~ Restricted.Pheno$Subtype_50, main = Gene[i])
+    } else {
+        print(paste("Multiple probes for", Gene[i]))
+    }
+}
+```
+
+
+```{r}
+sessionInfo()
+```

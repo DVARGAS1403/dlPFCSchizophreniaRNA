@@ -1,0 +1,117 @@
+---
+title: "Demographics of the schizophrenia subgroups at a perturbation stability level of 0.50"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+This analysis we examine the demographics of the type 1 vs type 2 schizophrenics.
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, results='hide'}
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/6b - Perturbation stability of subtype.Rdata") # Contains:
+#   Type1MultipleErrors # Table with the percent of times each schizophrenic was scored as "Type1" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+#   Type2MultipleErrors # Table with the percent of times each schizophrenic was scored as "Type2" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+#   Data                # The expression array dataset restricted to Sz and controls
+#   Pheno               # The subject phenotype data including imputed subtype
+#   IlluminaProbes      # The array annotation provided by Illumina 
+#   DEprobes
+#   SzDEprobeResiduals  # The unscaled residuals after using robust mixed linear regression to correct the expression array data for the measured covariates (Batch, RIN, Age, etc.). This is data for the DEprobes only with the linear regression done on the schizophrenics only. There were no imputed covariates included in the linear regression which was part of analysis 6a
+```
+
+### Restrict "Pheno" to the schizophrenics only
+Important note:  We are reusing the variable name "Pheno"
+```{r Restrict_to_schizophrenics}
+Pheno.sav = Pheno
+Pheno = Pheno[Pheno$Dx == "Schizo",]
+```
+
+### Assign simple names to the covariates
+```{r Extract_covariates_from_Pheno}
+Dx = Pheno$Subtype_50
+Dx[Dx == "Mixed"] = "Intermediate"
+Age = Pheno$Age
+Sex = Pheno$Gender
+Race = Pheno$Race
+RIN = as.numeric(as.character(Pheno$RIN))
+```
+
+# Examine distribution by age
+```{r Age, cache=FALSE, fig.width=9, fig.height=6, out.width="900px", out.height="600px"}
+hist(Age[Dx == "Type2"], 
+     breaks = seq(from=20, to=100, by=5), 
+     ylim = c(0,15),
+     col = "red",
+     main="Type 1: blue \n Type 2: red", 
+     xlab = "Age")
+hist(Age[Dx == "Type1"], add=T,
+     breaks = seq(from=20, to=100, by=5), 
+     col = rgb(0, 0, 1, 0.5))
+```
+
+The type 1 and type 2 subcohorts are balanced with respect to age.
+
+# Examine distribution of the schizophrenics by gender
+```{r}
+foo = table(Dx, Sex)
+foo
+PercentFemale = foo[,1]/rowSums(foo)
+head(PercentFemale)
+table(Dx, Race)
+table(Sex,Race)
+```
+
+The type 1 and type 2 subcohorts are reasonably balanced with respect to race and gender.
+
+# Examine distribution by RIN
+```{r RIN, cache=FALSE, fig.width=9, fig.height=6, out.width="900px", out.height="600px"}
+hist(RIN[Dx == "Type2"], 
+     breaks = seq(from=4, to=10, by=0.3), 
+     probability = "TRUE",
+     col = "red",
+     main="Type 1: blue \n Type 2: red", 
+     ylim=c(0,1),
+     xlab = "RIN")
+hist(RIN[Dx == "Type1"], add=T,
+     breaks = seq(from=4, to=10, by=0.3), 
+     probability = "TRUE",
+     col = rgb(0, 0, 1, 0.5))
+```
+
+The type 1 and type 2 subcohorts are balanced with respect to RIN.
+
+# Statistical analysis
+```{r Stats, cache=FALSE}
+print("AGE")
+t.test(Age[Dx == "Type1"], Age[Dx == "Type2"]);
+wilcox.test(Age[Dx == "Type1"], Age[Dx == "Type2"]);
+
+print("SEX")
+#way 1
+chisq.test(Sex[Dx == "Type1" | Dx == "Type2"], Dx[Dx == "Type1" | Dx == "Type2"])
+#way 2 (via Harker)
+myTable = table(Sex, Dx)
+ChiData = myTable[c("F", "M"), c("Type1", "Type2")]
+ChiData
+chisq.test(ChiData)
+
+print("RACE")
+#way 1
+chisq.test(Race[(Dx == "Type1" | Dx == "Type2") & (Race == "AA" | Race == "CAUC")], Dx[(Dx == "Type1" | Dx == "Type2") & (Race == "AA" | Race == "CAUC")]);
+#way 2 (via Harker)
+myTable = table(Race, Dx)
+ChiData = myTable[c("AA", "CAUC"), c("Type1", "Type2")]
+ChiData
+chisq.test(ChiData)
+print("RIN")
+wilcox.test(RIN[Dx == "Type1"], RIN[Dx == "Type2"]);
+```
+
+
+```{r}
+sessionInfo()
+```

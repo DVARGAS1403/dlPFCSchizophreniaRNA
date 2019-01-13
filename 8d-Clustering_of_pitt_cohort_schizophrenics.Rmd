@@ -1,0 +1,248 @@
+---
+title: "Classification of the schizophrenics in the Pitt cohort based on the exons a differentially expressed in that cohort."
+output: html_document
+---
+Date:  `r date()`
+
+# Introduction
+We expect the DLPFC transcriptome of young, acutely ill schizophrenics such as those in the CMC-Pitt cohort to be different from that of older, so-called "burnt out" schizophrenics such as those in the other two cohorts. We will therefore analyze them separately.
+
+This is an analysis to cluster the schizophrenics in CMC-Pitt cohort based on the differentially expressed exons identified in analysis 8a.1 (The analysis based on the HBCC analysis done at a robustness level of 0.1) 
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, warning=FALSE}
+library("robust")
+library("WGCNA")
+options(stringsAsFactors = FALSE) # Required for WGCNA
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/8c - Pitt-only GLM.Rdata") # Contains:
+#   CensoredProbes # Just what it sounds like
+#   CMCdata        # The count data for all the exons
+#   CMCpheno       # The subject annotation file
+#   ExonList       # The exons mapping to the Illumia array probes detecting differentially expressed transcripts in the HBCC expression array data
+#   Type2Hits      # The Illumina array probes detecting differentially expressed transcripts in the HBCC type 2 schizophrenics
+#   d              # The DGElist with the normalized CMC data for the exons on ExonList with a mean number of counts of at least 10
+#   CMChits        # The statistically significant DE exons
+#   resultsGLM     # The results of the edgeR glm analysis of d
+
+# Rename "resultsGLM" as "PittResults"
+PittResults = resultsGLM
+rm(resultsGLM)
+
+# "CMCdata" contains raw counts for subjects from all three institutions without normalization. Delete it so we don't use it by mistake.
+rm(CMCdata)
+
+# Calculate a data file based on the raw counts for the Pittsburgh subjects (d$counts) and the effective library size for each library calculated from the columns of d$samples, "lib.size" and "norm.factors". The units of "Data" will be cpm (counts per million reads).
+foo = d$samples
+EffectiveSize = foo$lib.size * foo$norm.factors
+Data = apply(d$counts, 1, function(X){X/EffectiveSize}) * 1e06
+Data = t(Data) # transpose so the exons are rows and the subjects columns
+
+# Restrict "CMCpheno" to the Pittsburgh cohort
+Pheno = CMCpheno[CMCpheno$Institution == "Pitt",]
+```
+
+# Use robust linear regression to correct for covariates (ie calculate residuals)
+```{r Robust_linear_regression, cache=FALSE}
+date()
+Dx = Pheno$Dx
+RIN = Pheno$RIN
+Sex = as.factor(Pheno$Sex)
+Race = as.factor(Pheno$Race)
+Age = Pheno$Age
+
+Residuals = Data # Just to get the size and dimension names
+Residuals[,] = NA
+GLMfailure = vector(mode = "character", length(nrow(Data)))
+GLMfailure[] = NA
+
+for (i in 1:nrow(Data)) {
+    Model = tryCatch(lmRob(Data[i,] ~ Dx + RIN + Sex + Race + Age), warning = function(w) w)
+    # If there are no warnings, tryCatch will return the list of length 29 returned by lmRob
+    # If there is a warning, tryCatch will return the warning as much shorter list.
+
+    if (length(Model) > 20) {
+        Residuals[i,] = residuals(Model)
+    } else {
+        GLMfailure[i] = as.character(Model)
+    }
+}
+date()
+```
+There were `r sum(!is.na(GLMfailure))` failures.
+
+# Run WGCNA analysis to cluster the schizophrenics based on the RNAseq data from the exons which were identified as diffrentially expressed in Analysis 8b
+
+Choose $\beta$ as described in  Hovarth's tutorial 2a (http://labs.genetics.ucla.edu/horvath/CoexpressionNetwork/Rpackages/WGCNA/Tutorials/FemaleLiver-02-networkConstr-auto.pdf)
+```{r WGCNA_schizophrenics, cache=FALSE, results='hide', message=FALSE}
+# Restrict to the exons which are differentially expressed in the Pitt cohort
+DEexons = row.names(PittResults)[PittResults$FDR < 0.05]
+SchizData = Residuals[row.names(Data) %in% DEexons, Pheno$Dx == "SCZ"]
+ScaledSchizData = scale(SchizData)
+
+# Choose a set of soft-thresholding powers 
+powers = c(c(1:10), seq(from = 12, to=20, by=2)) 
+
+# Call the network topology analysis function 
+sft = pickSoftThreshold(ScaledSchizData, powerVector = powers, verbose = 5)
+
+# Plot the results
+sizeGrWindow(9, 5) 
+par(mfrow = c(1,2)); cex1 = 0.9; 
+# Scale-free topology fit index as a function of the soft-thresholding power 
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n", 
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], labels=powers,cex=cex1,col="red");
+abline(h=0.90,col="red") # this line corresponds to using an R^2 cut-off of h
+
+# Mean connectivity as a function of the soft-thresholding power 
+plot(sft$fitIndices[,1], sft$fitIndices[,5], xlab="Soft Threshold (power)",ylab="Mean Connectivity", 
+     type="n", main = paste("Mean connectivity")) 
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+``` 
+
+It is hard to interpret that Scale Independence curve, but in his e-mail of 8/21/2017 Peter Langfelder said this happens when the data is highly correlated. We will use a $\beta$ of 4.
+
+# Do the WGCNA analysis of "Residuals"
+```{r Run_WGCNA_schizophrenics, cache=FALSE, results='signed', message=FALSE}
+Radj = adjacency(ScaledSchizData, type="signed", power=4)
+Rtom = TOMsimilarity(Radj)
+RdissTOM = 1 - Rtom
+geneTree = hclust(as.dist(RdissTOM), method = "average"); # Call the hierarchical clustering function
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = RdissTOM, deepSplit = 2, pamRespectsDendro = FALSE);
+```
+
+```{r Display_WGNCA_schizophrenics, cache=FALSE}
+table(dynamicMods)
+
+dynamicColors = labels2colors(dynamicMods) # Convert numeric labels from the "dynamicMods" into colors
+Plot.colors = data.frame(dynamicColors) # This is where we add a second color bar if we want
+
+# Plot the dendrogram and colors underneath
+plotDendroAndColors(geneTree, colors=Plot.colors, 
+    dendroLabels = FALSE, hang = 0.03,
+    addGuide = TRUE, guideHang = 0.05,
+    main = "Clustering of CMC cohort schizophrenics")
+```
+
+We have two groups of schizophrenics.
+
+###  Create a vectors containing the subject IDs for the schizophrenics of the two types.
+
+#Assign the schizophrenics to type 1 or type 2
+```{r List_Modules_schizophrenics, cache=FALSE}
+Type1 = colnames(SchizData)[dynamicColors == "blue"]
+Type2 = colnames(SchizData)[dynamicColors == "turquoise"]
+
+New.Dx = as.character(Pheno$Dx)
+names(New.Dx) = row.names(Pheno)
+New.Dx[names(New.Dx) %in% Type1] = "Type_1_Sz"
+New.Dx[names(New.Dx) %in% Type2] = "Type_2_Sz"
+Pheno$New.Dx = New.Dx
+table(Pheno$New.Dx)
+```
+
+### Create a new DGElist containing the controls and type 1 schizophrenics only.
+
+# Run glm for the type 1 schizophrenics
+```{r Type_1, cache=FALSE}
+d1 = d
+d1$counts = d1$counts[,Pheno$New.Dx != "Type_2_Sz"]
+d1$samples = d1$samples[Pheno$New.Dx != "Type_2_Sz",]
+Pheno1 = Pheno[Pheno$New.Dx != "Type_2_Sz",]
+
+Pheno1$Race = as.factor(as.character(Pheno1$Race)) # Because there is noone or Race "Other" in the Pittsburgh cohort
+
+design = model.matrix(~ Dx + RIN + Sex + Age + Race, Pheno1)
+
+d1 = estimateDisp(d1, design, robust=TRUE)
+fit = glmQLFit(d1, design, robust=TRUE)
+qlf = glmQLFTest(fit, coef="DxSCZ")
+resultsGLM_Type1 = as.data.frame(topTags(qlf, n=nrow(d1$counts)))
+```
+
+For the type 1 schizophrenics, `r sum(resultsGLM_Type1$FDR < 5e-2)` of the `r length(resultsGLM_Type1$FDR )` exons being studied have an FDR of less that 0.05. 
+
+### Create a new DGElist containing the controls and type 2 schizophrenics only.
+
+# Run glm for the type 2 schizophrenics
+```{r Type_2, cache=FALSE}
+d2 = d
+d2$counts = d2$counts[,Pheno$New.Dx != "Type_1_Sz"]
+d2$samples = d2$samples[Pheno$New.Dx != "Type_1_Sz",]
+Pheno2 = Pheno[Pheno$New.Dx != "Type_1_Sz",]
+
+Pheno2$Race = as.factor(as.character(Pheno2$Race)) # Because there is noone or Race "Other" in the Pittsburgh cohort
+
+design = model.matrix(~ Dx + RIN + Sex + Age + Race, Pheno2)
+
+d2 = estimateDisp(d2, design, robust=TRUE)
+fit = glmQLFit(d2, design, robust=TRUE)
+qlf = glmQLFTest(fit, coef="DxSCZ")
+resultsGLM_Type2 = as.data.frame(topTags(qlf, n=nrow(d2$counts)))
+```
+
+For the type 2 schizophrenics, `r sum(resultsGLM_Type2$FDR < 5e-2)` of the `r length(resultsGLM_Type2$FDR )` exons being studied have an FDR of less that 0.05. 
+
+# Compare the two sets of differentially expressed exons
+```{r Compare, cache=FALSE}
+foo = ExonList[!duplicated(ExonList$Exon),]
+GeneNames = foo$Gene
+names(GeneNames) = foo$Exon
+
+CMC_Type1Hits = resultsGLM_Type1[resultsGLM_Type1$FDR < 0.05,]
+CMC_Type1Hits$Gene = GeneNames[row.names(CMC_Type1Hits)]
+
+CMC_Type2Hits = resultsGLM_Type2[resultsGLM_Type2$FDR < 0.05,]
+CMC_Type2Hits$Gene = GeneNames[row.names(CMC_Type2Hits)]
+
+Both = CMC_Type1Hits[row.names(CMC_Type1Hits) %in% row.names(CMC_Type2Hits),c(6,4,5)]
+colnames(Both) = c("Gene", "Type1_PValue", "Type1_FDR")
+AddColumns = CMC_Type2Hits[row.names(Both),4:5]
+colnames(AddColumns) = c("Type2_PValue", "Type2_FDR")
+Both = cbind(Both,AddColumns)
+Both$Exon = row.names(Both)
+row.names(Both) = NULL
+
+print("The top 20 DE genes in the Type 1 schizophrenics")
+Temp = CMC_Type1Hits[1:20,]
+row.names(Temp) = NULL
+Temp
+
+print("The top 20 DE genes in the Type 2 schizophrenics")
+Temp = CMC_Type2Hits[1:20,]
+row.names(Temp) = NULL
+Temp
+
+print("The top 20 on both lists in order of their significance on the Type 1 list")
+Both[1:20,1:5]
+
+print("The top 20 on both lists in order of their significance on the Type 2 list")
+index = order(Both$Type2_PValue)
+Both[index[1:20],1:5]
+```
+
+# Save interesting stuff
+```{r Save, cache=FALSE}
+save(file = "0._Rdata_files/8d - Pitt-only schizophrenic subtypes.Rdata",
+    # The following are things from previous analyses:
+    CensoredProbes,   # Just what it sounds like
+    ExonList,         # The exons mapping to the Illumia array probes detecting differentially expressed transcripts in the HBCC expression array data
+    PittResults,      # The results of the edgeR glm analysis of the entire Pitt cohort
+    # The following are the results from this analysis:
+    SchizData,        # The residuals from the schizophrenics only
+    resultsGLM_Type1, # The results of the edgeR glm analysis of the type 1 schizophrenics
+    resultsGLM_Type2, # The results of the edgeR glm analysis of the type 2 schizophrenics
+    CMC_Type1Hits,    # The exons differentially expressed in the type 1 schizophrenics at a statistically significant level
+    CMC_Type2Hits,    # The exons differentially expressed in the type 2 schizophrenics at a statistically significant level
+    Both)             # The exons differentially expressed in the both the type 1 and type 2 schizophrenics at a statistically significant level
+```
+
+
+``` {r}
+sessionInfo()
+```

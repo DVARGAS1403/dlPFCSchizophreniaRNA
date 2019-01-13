@@ -1,0 +1,140 @@
+---
+title: "CMC cohort demographics"
+output: html_document
+---
+Date:  `r date()`
+
+# Introduction
+The CMC dataset is actually three distinct cohorts:
+
+The Univeristy of Pittsburgh ("CMC-Pitt") cohort is based on brain specimens from autopsies conducted at the Allegheny County Office of the Medical Examiner.
+
+The University of Pennsylvania ("CMC-Penn") cohort is based on brain specimens are obtained from the Penn prospective collection.
+
+The Mount Sinai ("CMC-MSSM") cohort is based on brain specimens from the Pilgrim Psychiatric Center, collaborating nursing homes, Veteran Affairs Medical Centers and the Suffolk County Medical Examiner's Office. 
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE}
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/8a. Preprocessed CMC data.Rdata") #Contains:
+#   ExonList       # A data.frame with the exon, probe, and gene names for the exons which mapped to Illumina probes differentially expressed in the HBCC expression array data.
+#   CensoredProbes # A list with the probes censored based on Arloth et al.
+#   CMCdata        # The CMC exon count data for the schizophrenics and controls.
+#   CMCpheno       # The subject annotation file for the CMC controls and schizophrenics 
+#   Type2Hits      # The array probes differentially expressed in the HBCC type 2 schizophrenics (from analysis 7b)
+```
+
+# Race
+``` {r Race, cache=FALSE} 
+Inst = as.factor(as.character(CMCpheno$Institution))
+table(CMCpheno$Dx, CMCpheno$Race)
+table(CMCpheno$Dx, CMCpheno$Race, Inst)
+```
+The overall cohort is balanced with respect to race, but there are striking institutional differences. Specifically the Pittsburg cohort is different from the others in that it contains more African American schizophrenics than controls but many more Caucasian controls than schizophrenics.
+
+# Sex
+```{r Sex, cache=FALSE}
+table(CMCpheno$Dx, CMCpheno$Sex)
+table(CMCpheno$Dx, CMCpheno$Sex, Inst)
+```
+The cohort is close to balanced with respect to gender
+
+# Age
+```{r Age, cache=FALSE, fig.width=9, fig.height=6, out.width="900px", out.height="600px"}
+Age = CMCpheno$Age
+Dx = CMCpheno$Dx
+hist(Age[Dx == "Control"], breaks = 50, col = rgb(0, 0, 0, 0.5),
+     main="Total cohort \n Schizophrenic: striped \n Control: solid", xlab = "Age")
+hist(Age[Dx == "SCZ"], breaks=50, add=T, density = 20, angle = 45)
+
+hist(Age[Dx == "Control" & Inst == "MSSM"],  col = rgb(0, 0, 0, 0.5),
+     main="MSSM cohort \n Schizophrenic: striped \n Control: solid", xlab = "Age",
+     breaks = seq(from=20, to = 120, by = 5))
+hist(Age[Dx == "SCZ"& Inst == "MSSM"], add=T, density = 20, angle = 45,
+     breaks = seq(from=20, to = 120, by = 5))
+
+hist(Age[Dx == "Control" & Inst == "Penn"],  col = rgb(0, 0, 0, 0.5),
+     main="Penn cohort \n Schizophrenic: striped \n Control: solid", xlab = "Age",
+     breaks = seq(from=20, to = 120, by = 5), ylim = c(0,15))
+hist(Age[Dx == "SCZ"& Inst == "Penn"], add=T, density = 20, angle = 45,
+     breaks = seq(from=20, to = 120, by = 5))
+
+hist(Age[Dx == "Control" & Inst == "Pitt"],  col = rgb(0, 0, 0, 0.5),
+     main="Pitt cohort \n Schizophrenic: striped \n Control: solid", xlab = "Age",
+     breaks = seq(from=10, to = 120, by = 5), ylim = c(0,15))
+hist(Age[Dx == "SCZ"& Inst == "Pitt"], add=T, density = 20, angle = 45,
+     breaks = seq(from=10, to = 120, by = 5))
+```
+
+Note that the CMC-Pitt cohort is much younger than the other two. Also note the age imbalence in the CMC-Penn cohort.
+
+# RIN
+```{r RIN, cache=FALSE, fig.width=9, fig.height=6, out.width="900px", out.height="600px"}
+RIN = CMCpheno$RIN
+
+hist(RIN[Dx == "Control"], breaks = 50, col = "red",
+     main="Control: red \n Schizophrenic: blue", xlab = "RIN")
+hist(RIN[Dx == "SCZ"], breaks=50, add=T, col=rgb(0, 0, 1, 0.5) )
+
+hist(RIN[Dx == "Control" & Inst == "MSSM"], 
+     breaks = seq(from=5.5, to = 10, by = 0.1), col = "red",
+     main="Control: red \n Schizophrenic: blue \n MSSM", xlab = "RIN")
+hist(RIN[Dx == "SCZ" & Inst == "MSSM"], 
+     breaks = seq(from=5.5, to = 10, by = 0.1), add=T, 
+     col=rgb(0, 0, 1, 0.5) )
+
+hist(RIN[Dx == "Control" & Inst == "Penn"], 
+     breaks = seq(from=5.5, to = 10, by = 0.2), 
+     ylim=c(0,10),
+     col = "red",
+     main="Control: red \n Schizophrenic: blue \n Penn", xlab = "RIN")
+hist(RIN[Dx == "SCZ" & Inst == "Penn"], 
+     breaks = seq(from=5.5, to = 10, by = 0.2), add=T, 
+     col=rgb(0, 0, 1, 0.5) )
+
+hist(RIN[Dx == "Control" & Inst == "Pitt"], 
+     breaks = seq(from=5.5, to = 10, by = 0.1), col = "red",
+     main="Control: red \n Schizophrenic: blue \n Pitt", xlab = "RIN")
+hist(RIN[Dx == "SCZ" & Inst == "Pitt"], 
+     breaks = seq(from=5.5, to = 10, by = 0.1), add=T, 
+     col=rgb(0, 0, 1, 0.5) )
+```
+
+The cohort is unbalanced with respect to RIN. Obviously this is important, expecially if the "Jaffe correction" is necessary
+
+# Load NIMH data and compare
+```{r Load_nimh_data, cache=FALSE}
+load(file="0._Rdata_files/3. DLPFCdataset.Rdata") #This file was written by analysis 3. Contains:
+#   DLPFCdata  # A matrix containing the log2-transformed data,
+#   Phenotypes # A dataframe containing the subject phenotypes 
+
+NIMHDx = Phenotypes$NewDx
+Phenotypes = Phenotypes[(NIMHDx == "Control") | (NIMHDx == "Schizo"),]
+NIMHData = DLPFCdata[,(NIMHDx == "Control") | (NIMHDx == "Schizo")]
+NIMHDx = as.factor(NIMHDx[(NIMHDx == "Control") | (NIMHDx == "Schizo")])
+NIMHAge = as.numeric(Phenotypes$AgeDeath)
+
+Discard = NIMHAge < 25 | is.na(NIMHAge)
+Phenotypes = Phenotypes[!Discard,]
+NIMHData = NIMHData[,!Discard]
+NIMHDx = NIMHDx[!Discard]
+NIMHAge = NIMHAge[!Discard]
+
+#compare the two datasets
+t.test(NIMHAge, Age[Dx == "Control" & Inst == "MSSM"], paired=FALSE)
+t.test(NIMHAge, Age[Dx == "Control" & Inst == "Penn"], paired=FALSE)
+t.test(NIMHAge, Age[Dx == "Control" & Inst == "Pitt"], paired=FALSE)
+```
+
+```{r BA, cache=FALSE}
+table(CMCpheno$BA, CMCpheno$Institution)
+```
+
+We will ignore this covariate.
+
+
+```{r}
+sessionInfo()
+```

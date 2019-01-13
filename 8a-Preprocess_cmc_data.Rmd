@@ -1,0 +1,229 @@
+---
+title: "Preprocess CMC data"
+output: html_document
+---
+Date:  `r date()`
+
+# Introduction
+This analysis reformats the CMC data and prepares a DGElist containing the count data for the exons matching the Illumina expression array probes which detected differentially expressed transcripts in the NIMH dataset (dbGaP phs000979).
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, warning=FALSE}
+## If necessary, install required bioconductor package(s)
+#source("https://bioconductor.org/biocLite.R")
+#biocLite()
+#biocLite("edgeR")
+#biocLite("refGenome")
+## The above code does not need to be run if these have already been installed.
+
+library("edgeR")
+library ("refGenome")
+library("GenomicFeatures")
+options(stringsAsFactors = FALSE) # This is my preferred default
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+# Get the counts data 
+CMCexonCounts = as.matrix(
+    read.table(file="cmcdata/CMC.tsv", header = TRUE, row.names = 1, sep = "\t")
+)
+
+# Get the subject annotation file
+load(file="cmcdata/CMCmetadata") # This loads the dataframe "metadata".  
+row.names(metadata) = metadata$DLPFC_RNA_isolation..Sample.RNA.ID
+
+# Restrict the subject annotation file to the subjects for whom whe have RNAseq data and visa versa. This results in the elimination of 10 subjects from the exon count matrix.  I'm not sure why that is so and I'm not going to worry about it.
+CMCexonCounts = CMCexonCounts[,colnames(CMCexonCounts) %in% row.names(metadata)]
+metadata = metadata[colnames(CMCexonCounts),]
+
+# The subject annotation dataframe "metadata" has many columns, most of which are irrelevant to our analysis. 
+# Create a data.frame "Pheno" containing only the useful data
+Pheno = data.frame(Dx=metadata$Dx, 
+                 Sex=metadata$Gender,
+                 Race=metadata$Ethnicity,
+                 Age=metadata$Age.of.Death,
+                 BA=metadata$DLPFC_RNA_dissection..Brodmann.Area,
+                 RIN=metadata$DLPFC_RNA_isolation..RIN,
+                 Institution=as.factor(as.character(metadata$Institution)),
+                 row.names = row.names(metadata))
+
+# Pool Hispanic, Asian, and Multi-racial as "Other"
+Pheno$Race = as.character(Pheno$Race)
+Pheno$Race[(Pheno$Race != "Caucasian") & (Pheno$Race != "African-American")] = "Other"
+Pheno$Race = as.factor(Pheno$Race)
+
+# Treat Brodman area, Sex, and Race as a factors.
+Pheno$BA = as.factor(Pheno$BA)
+Pheno$Sex = as.factor(Pheno$Sex)
+Pheno$Race = as.factor(Pheno$Race)
+
+# Restrict to controls and schizophrenics
+Pheno$Dx = as.character(Pheno$Dx)
+CMCpheno = Pheno[Pheno$Dx == "Control" | Pheno$Dx == "SCZ",]
+CMCdata = CMCexonCounts[,colnames(CMCexonCounts) %in% row.names(CMCpheno)]
+CMCpheno$Dx = as.factor(CMCpheno$Dx)
+
+# Remove temporary files generated above
+rm(CMCexonCounts, Pheno, metadata)
+```
+
+At this point we have the following R objects:
+
+CMCdata:   A matrix containing the exon counts from the CMC DLPFC RNAseq data for the control and schizophrenic subjects in that dataset.
+
+CMCPheno:  The subject annotation file for the control and schizophrenic subjects in the CMC dataset
+
+# Identify the exons mapping to the Illumina probes to genes differentially expressed in the DLPFC of either the type 1 or type 2 schizphrenics in the HBCC dataset. 
+
+Note that the row.names of "CMCdata" have names like " ENSG00000000003:001" which only make sense if you have the corresponding GTF. Note further that some of them have names like "ENSG00000215099+ENSG00000129197:016" (ENSG00000215099 is retired.) However, the GTF uses the same names so everything works out.
+
+The purpose of the rather Baroque block of code below is to map the names of the Illumina probes (things like "ILMN_3244319") to the names used by CMC to identify the exons (names like " ENSG00000000003:001"). To do this we get the genomic location of the Illumina probes from the array re-annotation by Arloth and the genomic location of the exons from the GTF. Obviously the probes are smaller than the exons and the two have different start/stop locations. So the data.frames with that start/stop information are then converted to GRange objects and mapped using subsetByOverlaps{IRanges}.
+
+```{r Map_HBCC_probes_to_RNAseq_exons, cache=FALSE}
+# Get the HBCC hits.
+load(file="0._Rdata_files/7b. Sz subtype 2 lmer.Rdata") # Contains:
+#   Data           # The normalized, log2-transformed expression array data restricted to Sz and controls
+#   Pheno          # The subject phenotype data including Dx subtypes
+#   IlluminaProbes # The array annotation from Illumina
+#   Re_annotation  # The reannotation from Arloth 2015
+#   Results_2
+#   Type2Hits
+
+load(file="0._Rdata_files/7a. Sz subtype 1 lmer.Rdata") # Contains:
+#   Data           # The normalized, log2-transformed expression array data restricted to Sz and controls
+#   Pheno          # The subject phenotype data including Dx subtypes
+#   IlluminaProbes # The array annotation from Illumina
+#   Re_annotation  # The reannotation from Arloth 2015
+#   Results_1
+#   Type1Hits
+
+Probes = unique(c(row.names(Type1Hits), row.names(Type2Hits)))
+# "Probes" is a character vector containing the names of the Illumina probes differentially expressed in either the type 1 or type 2 NIMH schizophrenics (as compared to the controls in that cohort). The threshold for "differential expression" was a P-value of 0.05 after Boneferroni correction.
+
+# We will use the list below to keep track of probes which are filtered for one reason or another.
+CensoredProbes = list()
+
+# "Re_annotation" is the re-annotation of the Illumina array by Arloth 2015 which was downloaded from https://sourceforge.net/projects/reannotator/files/?source=navbars
+
+Illumina = Re_annotation # Rename so we can reuse previously written code
+
+# Illumina has 44938 rows. This is less than the 47231 probes on the array because not all of the probes were successfully aligned with hg19 by Arloth et al.
+
+# Filter Illumina to contain only those in "Probes" (the probes which detected differentially expressed transcripts in HBCC dataset)
+Illumina = Illumina[row.names(Illumina) %in% Probes,]
+CensoredProbes$FailedArloth = Probes[!(Probes %in% row.names(Illumina))]
+# 31 probes failed. In other words, there were 31 Illumina probes which detected differentially expressed transcripts which failed the Arloth annotation for one reason or another.
+
+# Delete probes containing a common SNP (MAF > 0.01)
+      # Process the "SNP_INFO" field to contain only the MAF and call it "MAF"
+MAF = Illumina$SNP_INFO
+MAF = sub(pattern = "MAF=", replacement = "", x = MAF) # Remove "MAF="
+MAF = sub(pattern=",.*", replacement="", x=MAF)	# Remove everything after the ","
+MAF = as.numeric(MAF)
+      # Filter the probes
+FooProbes = Illumina # A temporary file needed to keep track of the censored probes.
+Illumina = Illumina[(MAF > 0.01 & MAF < 0.99) | is.na(MAF),]
+CensoredProbes$MAF = FooProbes[!(row.names(FooProbes) %in% row.names(Illumina)),]
+# This deletes 2 probes, one to SLC45A1 and one to "LOC653778" which is annotated by Arloth as intergenic.	
+
+# Delete probes matching more than one gene
+FooProbes = Illumina
+Illumina = Illumina[as.logical(Illumina$uniq),]
+CensoredProbes$Multiple_Genes = FooProbes[!(row.names(FooProbes) %in% row.names(Illumina)),]
+# This deletes 199 probes. They all have an Arloth-assigned gene symbol of ""
+
+# Make a GRanges object containing the probes and their genomic locations
+df = data.frame(chr=paste("chr", Illumina$Chr, sep=""), 
+	start=Illumina$P_start, 
+	end=Illumina$P_end,
+	strand=Illumina$Strand, 
+	stringsAsFactors=FALSE)
+
+row.names(df) = row.names(Illumina)
+
+# Caution:  We are re-using the variable "Probes". It is now a GRanges object containing the probes which were not censored above.
+Probes = makeGRangesFromDataFrame(df)
+
+# Get the GTF.
+# A .gtf file is a tab-delimited text file, but of the exon ID information is in a format that would require quite a bit of manipulating if we read the file as a text file. We are therefore using the BioConductor package "refGenome" to parse the file. The way the functions in that package are formatted is a bit arcane, and the code below is copied directly from the vignette https://cran.r-project.org/web/packages/refGenome/vignettes/refGenome.pdf 
+
+# See also the e-mail from Wolfgang Kaisers (the author of the refGenome package) dated 5/11/2016.
+
+# See the refGenome vignette for this otherwise meaningless code	
+CMCgtf <- ensemblGenome() 
+basedir(CMCgtf) <- system.file("extdata", package="refGenome")
+read.gtf(CMCgtf, "Hsapiens_GRCh37_70_processed_dex.gtf")
+# Important note:  This requires that "Hsapiens_GRCh37_70_processed_dex.gtf" be in the directory '~/R/x86_64-pc-linux-gnu-library/3.3/refGenome/extdata/  There is a copy in ~/CMC, but that is NOT the one being read by this command.
+
+GTF = getGtf(CMCgtf) # This reformats the ensemblGenome object "CMCgtf" as a data.frame. It has dimensions 642338     12
+
+# Create a vector "GTF_id" reformatting the Ensembl gene ID and the exon number to the format of the row.names of the RNAseq data file "Data" (the RNAseq counts data after filtering to contain only data from controls and schizophrenics)
+
+Gene = GTF$gene_id
+Exon = GTF$ exonic_part_number
+GTF_id = paste(Gene,":",Exon, sep="")
+
+index = match(row.names(CMCdata), GTF_id)	
+GTF = GTF[index,]
+row.names(GTF) = row.names(CMCdata)
+
+# GTF is a dataframe with dimensions 589137     12 containing the genomic locations of the exons in the CMC RNAseq data set in the order which they appear in the RNAseq  dataset "CMCdata". Make it into a GRanges object.
+
+GTF = makeGRangesFromDataFrame(GTF, keep.extra.columns=TRUE)
+
+# Now use subsetByOverlaps{IRanges} to map the Illumina probes onto the RNAseq exons
+
+# CMCmapping is a list containing the row.names for the CMCexons corresponding to the Illumina probes.  It has to be a list and not a character vector because there are some probes which map to multiple CMC exons
+
+CMCmapping = list()
+
+# This loop takes several minutes to run
+for (i in 1:length(Probes)) {
+    CMCexon = subsetByOverlaps(GTF, Probes[i])
+    if (length(CMCexon) > 0) {
+        CMCmapping[[i]] = names(CMCexon)
+    } else {
+        CMCmapping[[i]]= "NoMatch"
+    }
+}
+
+names(CMCmapping) = names(Probes)
+
+# IMPORTANT: CMCmapping is a list, NOT a vector. There are multiple exons mapping to some probes so some of the elements on the list are character vectors with length > 1.
+
+print("Number of probes matching multiple exons")
+NumberOfExons = unlist(lapply(CMCmapping, function(x) {length(x)}))
+table(NumberOfExons)
+
+# IMPORTANT: We will keep all the exons, not just those matching probes which matched to only one exon. In theory a probe sequence might overlap an exon boundry so some of the double matches could be real. Matches to more than two exons are hard to explain and that data will require manual curation.
+
+ExonList = data.frame(matrix(nrow=0, ncol = 2))
+
+# This loop rather than a simple "unlist()" is necessary to preserve the probe names when there are multiple exons matching a single probe.
+for (i in 1:length(CMCmapping)) {
+    foo = data.frame(matrix(nrow=length(unlist(CMCmapping[i])), ncol = 2))
+    foo[,1] = unlist(CMCmapping[i])
+    foo[,2] = names(CMCmapping[i])
+    ExonList = rbind(ExonList,foo)
+}
+colnames(ExonList) = c("Exon", "Probe")
+
+Gene = Illumina[ExonList$Probe, "Gene_symbol"]
+ExonList = cbind(ExonList,Gene)
+```
+
+# Save the useful stuff
+```{r Save, cache=FALSE}
+save(file = "0._Rdata_files/8a. Preprocessed CMC data.Rdata",
+     ExonList,       # A data.frame with the exon, probe, and gene names for the exons which mapped to Illumina probes differentially expressed in the HBCC expression array data.
+     CensoredProbes, # A list with the probes censored based on Arloth et al.
+     CMCdata,        # The CMC exon count data for the schizophrenics and controls.
+     CMCpheno,       # The subject annotation file for the CMC controls and schizophrenics 
+     Type2Hits)      # The array probes differentially expressed in the HBCC type 2 schizophrenics (from analysis 7b)
+```
+
+
+```{r}
+sessionInfo()
+```

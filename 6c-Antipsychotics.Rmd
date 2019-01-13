@@ -1,0 +1,50 @@
+---
+title: "Analysis of antipsychotics"
+author: "Rhodes"
+output: html_document
+---
+Date:  `r date()`  
+
+# Introduction
+This analysis we examine the relationship between antipsychotics and the type 1 vs type 2 schizophrenics.
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE, results='hide'}
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+# Get the file "Phenotypes" which includes things like "Antipsychotics" which were filtered when "Pheno" was written.
+load(file="0._Rdata_files/3. DLPFCdataset.Rdata") # Contains:
+#   DLPFCdata  # A matrix containing the log2-transformed data,
+#   Phenotypes # A dataframe containing the subject phenotypes 
+        
+# Load DLPFC data
+load(file="0._Rdata_files/6b - Perturbation stability of subtype.Rdata") # Contains:
+#   Type1MultipleErrors # Table with the percent of times each schizophrenic was scored as "Type1" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+#   Type2MultipleErrors # Table with the percent of times each schizophrenic was scored as "Type2" with the added random error of 0.05, 0.10, 0.25, and 0.50 standard deviations
+#   Data                # The expression array dataset restricted to Sz and controls
+#   Pheno               # The subject phenotype data including imputed subtype
+#   IlluminaProbes      # The array annotation provided by Illumina 
+#   DEprobes
+#   SzDEprobeResiduals  # The unscaled residuals after using robust mixed linear regression to correct the expression array data for the measured covariates (Batch, RIN, Age, etc.).  This is data for the DEprobes only with the linear regression done on the schizophrenics only. There were no imputed covariates included in the linear regression which was part of analysis 6a
+```
+
+### Assign simple names to the covariates
+```{r Make_neuroleptic_table, cache=FALSE}
+# Extract "Antipsychotics" from Phenotypes
+Neuroleptics = Phenotypes[row.names(Pheno), "Antipsychotics"]
+
+# Extract Dx from Pheno
+Dx = as.character(Pheno$Subtype_50)
+Dx[Dx == "Mixed"] = "Intermediate"
+
+TABLE = table(Neuroleptics, Dx)
+ChiData = TABLE[c("Negative  ", "Positive  "), c("Type1", "Type2")]
+TABLE
+chisq.test(ChiData)
+```
+
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,120 @@
+---
+title: "Normalize and log2-transform idat files"
+author: "Rhodes"
+output: html_document
+---
+Date: `r date()`
+
+# Introduction
+In this analysis we will create dataframes containing the normalized, log2-transformed expression array data and the "detection scores" from the DLPFC samples using functions from the {beadarray} and {lumi} packages.
+
+Note that these dataframes will contain ONLY data from the DLPFC, but that will include the data from ALL the subjects regardless of diagnosis.
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE}
+library(beadarray)
+library(stringr)
+library(lumi)
+library("illuminaHumanv4.db")
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/1. DLPFC.Phenotypes.Rdata")
+```
+
+# Generate a list of the idat files for the DLPFC samples
+```{r Get_file_names, cache=FALSE}
+# This next block of code creates a vector of the idat file names with each element of the vector named with the file name reformatted to match the array names in the dataframe "Phenotypes"
+
+setwd("HBCCdata/idatFiles")
+AllFiles = list.files()
+ArrayNames = str_extract(string = AllFiles,  pattern = "[0-9]+_[A-Z]")
+ArrayNames = sub(pattern = "_", replacement = "", ArrayNames)
+names(AllFiles) = ArrayNames
+setwd(RootDirectory)
+
+# We now restrict that list of files to the arrays for DLPFC samples.
+# Note that we loaded the dataframe "Phenotypes" from the file "DLPFC.Phenotypes" - it is the phenotype file restricted to the DLPFC samples only.
+
+idatFiles = AllFiles[names(AllFiles) %in% row.names(Phenotypes)]
+```
+
+# Read the idat files
+```{r Read_the_idat_files, cache=FALSE}
+# Robin Kramer recommended that we read the idat files using readIdatFiles {beadarray}
+setwd("HBCCdata/idatFiles")
+ise = readIdatFiles(idatFiles)
+setwd(RootDirectory)
+```
+
+This R object "ise" is of the class "ExpressionSetIllumina". For a descrption of these objects, see the documentation "BeadArrayUseCases.pdf".
+
+```{r str(ise), cache=FALSE}
+str(ise)
+```
+
+These idat files contain the expression array data, but little else of value. **Specifically, the QC slot which should contain things like "date" is empty.** 
+
+# Normalize and log2-transform the expression array data
+We are using log2 as the variance stabilizing transformation so the results will be more intuitively meaningful.
+```{r Normalize_and_log2-transform, cache=FALSE}
+esin = normaliseIllumina(ise, method="quantile", transform="log2")
+DLPFCdata.log2 = exprs(esin)
+```
+
+# Calculate detection scores
+We will use the function calculateDetection() to calculate the detection scores
+
+### Quoting from the help file for calculateDetection(){beadarray}:   
+Detection scores are a measure of whether the probe is showing any specific expression. This function implements Illumina's method for calculating the detection scores for all bead types on a given array. Within an array, Illumina discard negative control bead-types whose summary values are more than three MADs from the median for the negative controls. Illumina then rank the summarized intensity for each other bead-type against the summarized values for the remaining negative control bead-types and calculate a detection p-value 1-R/N, where R is the relative rank of the bead intensity when compared to the $N$ remaining negative controls. Thus, if a particular bead has higher intensity than all the negative controls it will be assigned a value of 0. This calculation is repeated for all arrays. 
+### Ending quoted material
+
+The function calculateDetection() requires the status data frame which identifies the "regular" probes (those listed in the Illumina documentation for the array) and the control probes. I don't think we have any other use for it, but I'm extracting it here and displaying the first four rows just for the purposes of documentation.
+```{r Extract_probe_status, cache=FALSE}
+Status = ise@featureData@data
+Status[1:4,]
+```
+
+I suspect that calculateDetection() probably also uses the se.exprs and nObservation matrices. Again, just for documentation purposes, I'm displaying a portion of those matrices here.
+
+```{r SE_and_nObs, cache=FALSE}
+SE = ise@assayData$se.exprs
+nObs = ise@assayData$nObservations
+SE[1:4,1:5]
+nObs[1:4,1:5]
+```
+
+# Calculate the detection score
+```{r Calculate_detection_score, cache=FALSE, results='hide', message=FALSE}
+DLPFC.det = calculateDetection(ise)
+```
+
+```{r Display_detection_score, cache=FALSE}
+DLPFC.det[1:4,1:5]
+```
+
+# Remove the "_" in the column names for DLPFC.det and DLPFCdata.log2
+```{r Remove_the_underscore, cache=FALSE}
+colnames(DLPFCdata.log2) = sub(pattern = "_", replacement = "", colnames(DLPFCdata.log2))
+colnames(DLPFC.det) = sub(pattern = "_", replacement = "", colnames(DLPFC.det))
+```
+
+# Reorder the row names of "Phenotypes" to match the column names of "DLPFCdata.log2" and "DLPFC.det"
+```{r Reorder_rows_of_Phenotypes, cache=FALSE}
+Phenotypes = Phenotypes[colnames(DLPFCdata.log2),]
+```
+
+# Save the results
+```{r Save_expression_array_data}
+save(file="0._Rdata_files/2. DLPFC_data.Rdata", 
+  Phenotypes,     # The phenotype dataframe from analysis 1
+  DLPFCdata.log2, # Quantile normalized, log2-transformed data
+  DLPFC.det,      # The Illumina detection scores
+  ise)            # The ExpressionSetIllumina object containing the DLPFC data 
+```
+
+
+```{r SessionInfo}
+sessionInfo()
+```

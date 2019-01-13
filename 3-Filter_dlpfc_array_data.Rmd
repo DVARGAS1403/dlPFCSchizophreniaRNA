@@ -1,0 +1,77 @@
+---
+title: "Filter array data"
+author: "Rhodes"
+output: html_document
+---
+Date: `r date()`
+
+# Introduction
+The expression array dataset includes data from probes which contain a common SNP within the probe sequence. These probes can be identified by reference to the array re-annotation published by Ramasay et al. Although the data from those probes could be used if the genotype at that SNP were included as a covariate, for the time being, we will simply remove the data from the array matrix.
+
+There are also many probes which detect transcripts present at levels which are not statistically significantly different from zero. Data from those probes contribute only noise and are also removed from the dataset.
+
+# Load data and libraries
+```{r Load_data_and_libraries, cache=FALSE, message=FALSE}
+library(lumi)
+
+RootDirectory = "~/Manuscript"
+setwd(RootDirectory)
+
+load(file="0._Rdata_files/2. DLPFC_data.Rdata") # This file was written by analysis 2. Contains:
+#   Phenotypes     # Phenotype data from the previous analysis
+#   DLPFCdata.log2 # Quantile normalized, log2-transformed data
+#   DLPFC.det      # The Illumina detection scores
+#   ise            # The ExpressionSetIllumina object containing the DLPFC data 
+
+rm(ise)
+```
+
+# Filter to remove probes which have values of NA or Inf
+```{r Remove_NA, cache=FALSE}
+AnyNAs = apply(DLPFCdata.log2, 1, function(X) any(is.na(X)) | any(is.infinite(X)))
+DLPFCdata.log2 = DLPFCdata.log2[!AnyNAs,]
+DLPFC.det = DLPFC.det[!AnyNAs,]
+```
+
+This results in the removal of `r sum(AnyNAs)` probes.
+
+# Filter expression array data to remove probes detecting transcripts whose expression is not statistically significant
+```{r Filter_based_on_DLPFC.det, cache=FALSE}
+TotalZeros = apply(DLPFC.det, 1, function(X) sum(X == 0))
+par(mfrow=c(1,2))
+hist(TotalZeros, breaks = 1000)
+hist(TotalZeros, breaks = 1000, xlim=c(800,850))
+DLPFCdata = DLPFCdata.log2[TotalZeros > 840,]
+par(mfrow=c(1,1))
+```
+
+This results in the removal of `r nrow(DLPFCdata.log2) - nrow(DLPFCdata)` or `r round(100*(nrow(DLPFCdata.log2) - nrow(DLPFCdata))/nrow(DLPFCdata.log2), digits=0)`% of the probes
+
+```{r Histogram_of_discarded_probes, cache=FALSE}
+par(mfrow=c(1,2))
+hist(DLPFCdata.log2[TotalZeros <= 840,], main="Discarded probes")
+hist(DLPFCdata.log2[TotalZeros > 840,], main="Retained probes")
+par(mfrow=c(1,1))
+```
+
+# Filter expression array data to remove probes which contain a polymorphism based on Ramasamy et al., (2013)
+```{r Remove_probes_containing_SNPs, cache=FALSE}
+PiP = read.csv(file="resources/Ramasamy 2013 - PIP SNPs.csv", header=TRUE)
+foo = nrow(DLPFCdata)
+DLPFCdata = DLPFCdata[!(row.names(DLPFCdata) %in% PiP$Probe.ID),]
+```
+This results in the exclusion of the data from `r foo - nrow(DLPFCdata)` probes
+
+We now have expression array data based on `r nrow(DLPFCdata)` probes from the DLPFC of `r ncol(DLPFCdata)` subjects
+
+# Save the results 
+```{r Save_results}
+save(file="0._Rdata_files/3. DLPFCdataset.Rdata",
+     DLPFCdata,  # A matrix containing the log2-transformed data,
+     Phenotypes) # A dataframe containing the subject phenotypes 
+```
+
+
+```{r SessionInfo}
+sessionInfo()
+```
